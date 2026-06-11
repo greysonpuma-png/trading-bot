@@ -2,9 +2,9 @@
 .env
 */.env
 
-# Virtual environments
-.venv/
-*/.venv/
+# Virtual environments (including renamed backups like .venv-py39-backup)
+.venv*/
+*/.venv*/
 
 # Runtime logs (trading history, heartbeat, P&L snapshots)
 logs/

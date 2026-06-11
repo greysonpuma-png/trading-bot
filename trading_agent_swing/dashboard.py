@@ -181,12 +181,16 @@ try:
             merged["SPY buy-and-hold"] = merged["close"] / spy_start * start_equity
             st.line_chart(merged.set_index("date")[["Account", "SPY buy-and-hold"]])
 
-            acct_ret = (merged["Account"].iloc[-1] / merged["Account"].iloc[0] - 1) * 100
-            spy_ret  = (merged["close"].iloc[-1]   / merged["close"].iloc[0]   - 1) * 100
-            b1, b2, b3 = st.columns(3)
-            b1.metric("Your account return", f"{acct_ret:+.2f}%")
-            b2.metric("SPY buy-and-hold",    f"{spy_ret:+.2f}%")
-            b3.metric("Alpha (you − SPY)",   f"{acct_ret - spy_ret:+.2f}%")
+            # Guard the return math: portfolio history can lead with 0-equity rows
+            # (account creation day), which made these divisions emit warnings.
+            acct_start, spy_start_px = merged["Account"].iloc[0], merged["close"].iloc[0]
+            if acct_start > 0 and spy_start_px > 0:
+                acct_ret = (merged["Account"].iloc[-1] / acct_start - 1) * 100
+                spy_ret  = (merged["close"].iloc[-1]   / spy_start_px - 1) * 100
+                b1, b2, b3 = st.columns(3)
+                b1.metric("Your account return", f"{acct_ret:+.2f}%")
+                b2.metric("SPY buy-and-hold",    f"{spy_ret:+.2f}%")
+                b3.metric("Alpha (you − SPY)",   f"{acct_ret - spy_ret:+.2f}%")
         else:
             st.line_chart(acct_df.set_index("date"))
 except Exception as e:
@@ -226,7 +230,7 @@ st.divider()
 st.subheader("All proposals (most recent first)")
 display_cols = [c for c in ["timestamp", "symbol", "side", "qty", "risk_approved", "status", "executed", "reason"]
                 if c in proposals.columns]
-st.dataframe(proposals[display_cols], use_container_width=True, hide_index=True)
+st.dataframe(proposals[display_cols], width="stretch", hide_index=True)
 
 # ── Bot journal — what the Position Manager recorded each cycle ──
 st.divider()

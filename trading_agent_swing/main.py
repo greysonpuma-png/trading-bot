@@ -19,12 +19,20 @@ from agent import TradingAgent
 
 
 def _write_heartbeat():
-    """Touch logs/heartbeat.txt so a stalled loop is visible without scraping logs."""
-    try:
-        with open(os.path.join(CONFIG.log_dir, "heartbeat.txt"), "w") as f:
-            f.write(datetime.now().isoformat())
-    except OSError:
-        pass  # heartbeat failure must never crash the loop
+    """Touch the heartbeat files so a stalled loop is visible without scraping logs.
+
+    Two copies: logs/heartbeat.txt for the dashboard, and ~/.trading_bot_heartbeat
+    for the launchd health-check agent — background agents can't read ~/Documents
+    (macOS TCC), so the watchdog needs a copy outside it.
+    """
+    stamp = datetime.now().isoformat()
+    for path in (os.path.join(CONFIG.log_dir, "heartbeat.txt"),
+                 os.path.expanduser("~/.trading_bot_heartbeat")):
+        try:
+            with open(path, "w") as f:
+                f.write(stamp)
+        except OSError:
+            pass  # heartbeat failure must never crash the loop
 
 
 def banner():

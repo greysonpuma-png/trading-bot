@@ -175,6 +175,7 @@ iteration so you can verify it hasn't silently hung.
 | `config.py`            | Knobs: risk limits, symbol whitelist, model provider               |
 | `broker.py`            | Alpaca wrapper. Same code paper or live. Supports day & week bars  |
 | `risk_layer.py`        | **Most important file.** 10 hard checks the LLM cannot bypass      |
+| `test_risk_layer.py`   | Tests proving every risk check rejects what it must (`pytest`)     |
 | `screener.py`          | Pure-Python pre-screener — no LLM                                  |
 | `tools.py`             | 11 tool definitions exposed to the LLM via function calling        |
 | `agent.py`             | 3-stage agent loop: Position Manager → Scout → Risk Manager        |

@@ -13,4 +13,5 @@ risk layer, walk-forward backtesting framework, and honest negative results.
 | `start_bot.command` | Launcher — opens the bot in a Terminal window (used by Login Item) |
 | `setup_autostart.sh` / `stop_autostart.sh` | Install/remove auto-start at login |
 | `setup_market_wake.sh` / `stop_market_wake.sh` | Schedule/cancel Mac auto-wake before market open |
+| `setup_health_alert.sh` / `stop_health_alert.sh` | Install/remove a watchdog that notifies if the bot's heartbeat goes stale during market hours |
 | `COMMANDS.md` | Beginner-friendly command cheat sheet |
