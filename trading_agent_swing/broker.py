@@ -12,7 +12,8 @@ socket.setdefaulttimeout(60)
 
 from datetime import datetime, timedelta
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest, TakeProfitRequest, StopLossRequest
+from alpaca.trading.requests import (MarketOrderRequest, TakeProfitRequest, StopLossRequest,
+                                     TrailingStopOrderRequest)
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest, StockLatestQuoteRequest
@@ -156,6 +157,65 @@ class Broker:
             "stop_price": round(float(stop_price), 2),
             "take_profit_price": round(float(take_profit_price), 2),
             "submitted_at": order.submitted_at.isoformat() if order.submitted_at else None,
+        }
+
+    def submit_trailing_entry(self, symbol: str, qty: int, side: str,
+                              trail_percent: float) -> dict:
+        """Market entry, then attach a server-side TRAILING-STOP sell once filled.
+
+        The trailing stop lives at Alpaca and ratchets up with the position's
+        high-water mark — protection survives bot crashes, just like brackets,
+        but with no profit cap (cut losers, let winners run).
+
+        Alpaca brackets cannot hold a trailing leg, so this is two orders. If the
+        entry does not fill within ~30s it is cancelled — never leave a position
+        unprotected or a stray sell order unbacked.
+        """
+        import time as _time
+
+        entry_req = MarketOrderRequest(
+            symbol=symbol,
+            qty=qty,
+            side=OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
+        )
+        entry = self.trading.submit_order(entry_req)
+
+        filled = False
+        for _ in range(15):                       # up to ~30s; market orders fill in ms
+            o = self.trading.get_order_by_id(entry.id)
+            if o.status.value == "filled":
+                filled = True
+                break
+            _time.sleep(2)
+
+        if not filled:
+            self.trading.cancel_order_by_id(entry.id)
+            return {
+                "id": str(entry.id), "symbol": symbol, "qty": float(qty),
+                "side": side, "status": "cancelled_unfilled",
+                "error": "entry did not fill within 30s; cancelled to avoid an unprotected position",
+            }
+
+        trail_req = TrailingStopOrderRequest(
+            symbol=symbol,
+            qty=qty,
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.GTC,        # persists day-to-day at the broker
+            trail_percent=round(float(trail_percent), 1),
+        )
+        trail = self.trading.submit_order(trail_req)
+
+        return {
+            "id": str(entry.id),
+            "symbol": symbol,
+            "qty": float(qty),
+            "side": side,
+            "status": "filled",
+            "order_class": "trailing",
+            "trail_percent": round(float(trail_percent), 1),
+            "trail_order_id": str(trail.id),
+            "submitted_at": entry.submitted_at.isoformat() if entry.submitted_at else None,
         }
 
     def close_all_positions(self) -> list:

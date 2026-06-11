@@ -71,6 +71,14 @@ GOOD_STOP   = 94.0
 GOOD_TARGET = 112.0
 
 
+@pytest.fixture(autouse=True)
+def bracket_mode_default(monkeypatch):
+    """Pin the exit style for every test so results don't depend on what the
+    local .env happens to set. Trailing-mode tests override this explicitly."""
+    monkeypatch.setattr(CONFIG, "exit_style", "bracket")
+    monkeypatch.setattr(CONFIG, "trail_percent", 10.0)
+
+
 # ─── Check 1: symbol whitelist ───────────────────────────────────────────────
 
 def test_rejects_symbol_not_in_whitelist(tmp_path):
@@ -231,6 +239,33 @@ def test_rejects_reward_risk_below_1_5(tmp_path):
     result = risk.check_order("SPY", 5, "buy", stop_price=94.0, take_profit_price=106.0)
     assert not result.approved
     assert "reward:risk" in result.reason
+
+
+# ─── Check 10 in trailing-exit mode (Exp4) ───────────────────────────────────
+
+def test_trailing_mode_approves_buy_without_bracket(tmp_path, monkeypatch):
+    monkeypatch.setattr(CONFIG, "exit_style", "trailing")
+    risk = make_risk(tmp_path, FakeBroker(ask=100.0))
+    result = risk.check_order("SPY", 5, "buy")
+    assert result.approved, result.reason
+
+
+def test_trailing_mode_rejects_bad_trail_percent(tmp_path, monkeypatch):
+    monkeypatch.setattr(CONFIG, "exit_style", "trailing")
+    monkeypatch.setattr(CONFIG, "trail_percent", 2.0)   # below the 3-15% band
+    risk = make_risk(tmp_path, FakeBroker(ask=100.0))
+    result = risk.check_order("SPY", 5, "buy")
+    assert not result.approved
+    assert "trail_percent" in result.reason
+
+
+def test_trailing_mode_still_enforces_other_checks(tmp_path, monkeypatch):
+    # Trailing mode relaxes the bracket requirement, NOT the whitelist/caps/etc.
+    monkeypatch.setattr(CONFIG, "exit_style", "trailing")
+    risk = make_risk(tmp_path, FakeBroker(ask=100.0))
+    result = risk.check_order("GME", 5, "buy")
+    assert not result.approved
+    assert "whitelist" in result.reason
 
 
 # ─── The happy path: a textbook order passes everything ──────────────────────

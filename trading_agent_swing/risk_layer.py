@@ -110,10 +110,20 @@ class RiskLayer:
                         f"Choose a different sector to stay diversified."
                     )
 
-        # 10. Bracket sanity — for buys, validate the stop-loss and take-profit.
-        #    This is also where we enforce swing-appropriate stop distances, so the
-        #    model cannot sneak through day-trade-style 0.3% stops on a swing trade.
-        if side == "buy":
+        # 10. Exit-protection sanity — for buys, validate whatever exit mechanism
+        #    this configuration uses. The model cannot sneak through an unprotected
+        #    position in either mode.
+        if side == "buy" and CONFIG.exit_style == "trailing":
+            # Trailing mode: protection is a server-side trailing stop attached
+            # after fill. Validate the trail distance like a stop distance —
+            # 3-15%, same band as bracket stops. No target to validate.
+            tp = CONFIG.trail_percent
+            if not (3.0 <= tp <= 15.0):
+                return RiskCheckResult(
+                    False,
+                    f"trail_percent {tp}% outside the 3-15% band — fix TRAIL_PERCENT in .env"
+                )
+        elif side == "buy":
             if stop_price is None or take_profit_price is None:
                 return RiskCheckResult(False, "buy orders require both stop_price and take_profit_price")
             entry = quote["ask"]

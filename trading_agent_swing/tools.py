@@ -175,8 +175,11 @@ def propose_trade(symbol: str, side: str, qty: int, reason: str,
     symbol = symbol.upper()
     side = side.lower()
 
-    # A buy with no stop/target is not allowed — bounce it back so the model retries.
-    if side == "buy" and (stop_price is None or take_profit_price is None):
+    # In bracket mode, a buy with no stop/target is not allowed — bounce it back.
+    # In trailing mode the exit protection is a server-side trailing stop attached
+    # automatically after fill, so stop/target are not required.
+    if (CONFIG.exit_style != "trailing" and side == "buy"
+            and (stop_price is None or take_profit_price is None)):
         return {
             "accepted": False,
             "reason": ("buy proposals MUST include numeric stop_price and take_profit_price. "
@@ -208,7 +211,10 @@ def propose_trade(symbol: str, side: str, qty: int, reason: str,
 
     if CONFIG.auto_execute_proposals:
         try:
-            if side == "buy":
+            if side == "buy" and CONFIG.exit_style == "trailing":
+                order = _broker.submit_trailing_entry(symbol, qty, "buy",
+                                                      CONFIG.trail_percent)
+            elif side == "buy":
                 order = _broker.submit_bracket_order(symbol, qty, "buy",
                                                      stop_price, take_profit_price)
             else:
@@ -373,10 +379,14 @@ TOOLS_SCHEMA = [
             "description": (
                 "Propose a trade. Passes through risk checks. "
                 "REQUIRED first: get_account, get_positions, get_quote, get_bars(1Day,30), get_news. "
-                "For a BUY you MUST also pass stop_price and take_profit_price as numbers — the order is "
-                "submitted as a bracket order so the stop-loss and take-profit are enforced automatically "
-                "by the broker, even when the bot is offline. The risk layer requires the stop to be 3-15% "
-                "below entry and the reward:risk ratio to be at least 1.5:1."
+                + ("For a BUY do NOT pass stop_price or take_profit_price — the system automatically "
+                   f"attaches a broker-side {CONFIG.trail_percent:.0f}% TRAILING stop after the fill "
+                   "(no profit target; winners run, losers get cut)."
+                   if CONFIG.exit_style == "trailing" else
+                   "For a BUY you MUST also pass stop_price and take_profit_price as numbers — the order is "
+                   "submitted as a bracket order so the stop-loss and take-profit are enforced automatically "
+                   "by the broker, even when the bot is offline. The risk layer requires the stop to be 3-15% "
+                   "below entry and the reward:risk ratio to be at least 1.5:1.")
             ),
             "parameters": {
                 "type": "object",

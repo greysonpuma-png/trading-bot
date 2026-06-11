@@ -40,6 +40,15 @@ class Config:
     # queue for human review via review.py. Toggle with AUTO_EXECUTE in the .env file.
     auto_execute_proposals: bool = os.getenv("AUTO_EXECUTE", "false").strip().lower() == "true"
 
+    # Exit style for new buys (Exp4, 2026-06-11):
+    #   "bracket"  — fixed stop + take-profit legs held at the broker (original)
+    #   "trailing" — server-side trailing stop (trail_percent below the high-water
+    #                mark), NO profit target: cut losers, let winners run.
+    # Walk-forward train result for trailing: avg alpha -2.0% vs bracket's -10.7%
+    # (still negative — forward paper trading is the live test of this config).
+    exit_style: str = os.getenv("EXIT_STYLE", "bracket").strip().lower()
+    trail_percent: float = float(os.getenv("TRAIL_PERCENT", "10"))
+
     # === Symbol whitelist — broader universe for swing trading ===
     # ETFs for sector/index exposure + large/mid caps with good liquidity and clear narratives
     allowed_symbols: List[str] = field(default_factory=lambda: [
