@@ -46,6 +46,11 @@ BREAKOUT_LOOKBACK = 20                                      # new N-day high tri
 # slightly weaker regime signal at the very start of the oldest window only.
 REGIME_MIN_PERIODS = 50
 
+# Exp4 (from the "24/7 Claude trader" video, 2026-06-11): trailing-exit params.
+# Cut losers at -7% from entry; trail winners 10% below their highest close.
+TRAIL_HARD_STOP_PCT = 0.07
+TRAIL_PCT           = 0.10
+
 # Train/holdout split. w=0 is the MOST RECENT window, w=N_WINDOWS-1 the OLDEST.
 # Tune and develop hypotheses against TRAIN. Reserve HOLDOUT for ONE-TIME final
 # validation of a candidate parameter set — repeatedly peeking at holdout
@@ -77,13 +82,20 @@ def _max_drawdown_pct(equity: pd.Series) -> float:
 
 # ─── Single-symbol, single-window simulator ─────────────────────────────────
 
-def _simulate_window(window_df: pd.DataFrame, regime_mask=None, entry_mode: str = "pullback") -> dict:
+def _simulate_window(window_df: pd.DataFrame, regime_mask=None, entry_mode: str = "pullback",
+                     exit_mode: str = "bracket") -> dict:
     """Run the strategy on one symbol's window of bars.
 
     entry_mode:
         "pullback" — original rule: buy on pullback to rising 20d MA in 50d uptrend
         "breakout" — Exp2: in SPY trending regime, buy on a new 20-day high in uptrend
         "both"     — try pullback first; if no signal, fall back to breakout
+
+    exit_mode:
+        "bracket"  — original: fixed stop / fixed target / max-hold time exit
+        "trailing" — Exp4: hard stop at -7% from entry, 10% trailing stop from the
+                     highest close since entry, NO profit target, NO time exit
+                     (cut losers fast, let winners run)
 
     regime_mask: boolean Series (aligned to window_df) — True where SPY > 200d MA.
                  Only used by the breakout entry path. Pullback ignores regime.
@@ -95,6 +107,7 @@ def _simulate_window(window_df: pd.DataFrame, regime_mask=None, entry_mode: str 
     shares      = 0
     entry_price = 0.0
     entry_idx   = -1
+    peak_close  = 0.0
     stop = target = 0.0
     trades = []
     equity = []
@@ -116,6 +129,7 @@ def _simulate_window(window_df: pd.DataFrame, regime_mask=None, entry_mode: str 
                         if shares > 0:
                             entry_price = price
                             entry_idx   = i
+                            peak_close  = price
                             stop        = entry_price * (1 - STOP_PCT)
                             target      = entry_price * (1 + TARGET_PCT)
                             cash       -= shares * price
@@ -133,18 +147,29 @@ def _simulate_window(window_df: pd.DataFrame, regime_mask=None, entry_mode: str 
                         if shares > 0:
                             entry_price = price
                             entry_idx   = i
+                            peak_close  = price
                             stop        = entry_price * (1 - STOP_PCT)
                             target      = entry_price * (1 + TARGET_PCT)
                             cash       -= shares * price
         else:
             exit_price = None
             reason     = None
-            if row["low"] <= stop:
-                exit_price, reason = stop, "stop"
-            elif row["high"] >= target:
-                exit_price, reason = target, "target"
-            elif i - entry_idx >= MAX_HOLD_DAYS:
-                exit_price, reason = price, "time"
+            if exit_mode == "bracket":
+                if row["low"] <= stop:
+                    exit_price, reason = stop, "stop"
+                elif row["high"] >= target:
+                    exit_price, reason = target, "target"
+                elif i - entry_idx >= MAX_HOLD_DAYS:
+                    exit_price, reason = price, "time"
+            else:  # trailing — check exits against peak from PRIOR bars (no same-bar lookahead)
+                hard_floor = entry_price * (1 - TRAIL_HARD_STOP_PCT)
+                trail_line = peak_close * (1 - TRAIL_PCT)
+                if row["low"] <= hard_floor:
+                    exit_price, reason = hard_floor, "hard_stop"
+                elif row["low"] <= trail_line:
+                    exit_price, reason = trail_line, "trail_stop"
+                else:
+                    peak_close = max(peak_close, price)
 
             if exit_price is not None:
                 cash += shares * exit_price
@@ -227,6 +252,8 @@ def main():
                         help="Which window set to evaluate (default: train)")
     parser.add_argument("--entry",   choices=["pullback", "breakout", "both"], default="pullback",
                         help="Entry rule (default: pullback — original behavior)")
+    parser.add_argument("--exit",    choices=["bracket", "trailing"], default="bracket",
+                        help="Exit rule (default: bracket — original behavior)")
     parser.add_argument("symbols",   nargs="*",  help="Symbols (default: whole whitelist)")
     args = parser.parse_args()
 
@@ -304,7 +331,8 @@ def main():
         for sym, df in bars_by_symbol.items():
             sim = _simulate_window(df.iloc[start_idx:end_idx],
                                    regime_mask=spy_regime_window,
-                                   entry_mode=args.entry)
+                                   entry_mode=args.entry,
+                                   exit_mode=args.exit)
             per_symbol_equities.append(sim["equity"])
             all_trades.extend(sim["trades"])
 
