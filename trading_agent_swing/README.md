@@ -274,6 +274,20 @@ where 9+ sectors are up, and got the rotation wrong in 2021 (lost outright
 in a +14.8% SPY year). Skipped holdout validation — train alone was
 sufficient to inform the verdict.
 
+**4. Trailing-stop exits — forward test in progress** (`--exit trailing`)
+
+A fourth, pre-registered experiment (June 2026): replace bracket exits with a
+−7% hard stop + 10% trailing stop and **no profit target** — cut losers, let
+winners run. On the train windows this was the largest single-variable
+improvement found (avg alpha −10.7% → −2.0% for the deployed pure-trail
+config, Sharpe +1.0), driven by the COVID-crash window flipping to +8.8%
+alpha. But the holdout windows were already spent, so no honest backtest
+validation exists. Instead, the live paper bot now runs this exit style
+(server-side trailing stops at Alpaca, `EXIT_STYLE=trailing`) as a true
+out-of-sample forward test, measured as alpha vs SPY from 2026-06-11.
+Until that forward record exists, the train improvement should be assumed
+to be at least partly curve-fit.
+
 ### What the results add up to
 
 Three structurally different frameworks. Disciplined train/holdout
