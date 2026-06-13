@@ -93,12 +93,15 @@ class Broker:
                         "1Hour": 0.15, "1Day": 1, "1Week": 7}
         end = datetime.now()
         start = end - timedelta(days=max(int(limit * days_per_bar.get(timeframe, 1) * 2), 5))
+        # NOTE: do NOT pass `limit` to the API. Alpaca truncates from the START
+        # of the window, silently dropping the most recent bars — which had the
+        # bot reading ~2-week-stale history (bug found 2026-06-12). Fetch the
+        # whole window and keep the LAST `limit` bars instead.
         req = StockBarsRequest(
             symbol_or_symbols=symbol,
             timeframe=tf,
             start=start,
             end=end,
-            limit=limit,
         )
         bars = self.data.get_stock_bars(req)
         return [
@@ -111,7 +114,7 @@ class Broker:
                 "volume": int(b.volume),
             }
             for b in bars[symbol]
-        ]
+        ][-limit:]
 
     def submit_order(self, symbol: str, qty: int, side: str) -> dict:
         req = MarketOrderRequest(
