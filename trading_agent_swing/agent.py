@@ -23,7 +23,7 @@ from datetime import datetime
 from ollama import Client
 
 from config import CONFIG
-from tools import TOOLS_SCHEMA, execute_tool
+from tools import TOOLS_SCHEMA, execute_tool, clear_cycle_cache
 from screener import scan_market
 
 
@@ -183,6 +183,7 @@ class TradingAgent:
     # ---- run the full cycle ----
     def run_once(self, user_prompt: str = None) -> str:
         self._log({"event": "pipeline_start", "t": datetime.now().isoformat()})
+        clear_cycle_cache()   # fresh market data each cycle; dedup re-fetches within it
         parts = []
 
         # Stage 0 — Python screener (no LLM): reliably scans every symbol.

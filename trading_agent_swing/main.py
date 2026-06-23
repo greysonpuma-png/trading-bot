@@ -35,6 +35,29 @@ def _on_cycle_alarm(signum, frame):
     raise CycleTimeout(f"cycle exceeded {CYCLE_TIMEOUT_SECONDS}s — aborting and retrying next loop")
 
 
+def _rotate_agent_log(max_bytes: int = 5_000_000, keep: int = 2):
+    """Cap the verbose agent.jsonl debug trace so it can't grow without bound.
+
+    ONLY rotates agent.jsonl. proposals/journal/picks.jsonl are the permanent
+    trade record (the dashboard and forward analysis read them) and are never
+    touched. agent.py opens the file fresh per write, so renaming between cycles
+    is safe — the next write recreates agent.jsonl.
+    """
+    path = os.path.join(CONFIG.log_dir, "agent.jsonl")
+    try:
+        if not os.path.exists(path) or os.path.getsize(path) < max_bytes:
+            return
+        for i in range(keep, 0, -1):                       # shift .1 -> .2, drop oldest
+            older = f"{path}.{i}"
+            newer = f"{path}.{i - 1}" if i > 1 else path
+            if os.path.exists(newer):
+                if i == keep and os.path.exists(older):
+                    os.remove(older)
+                os.replace(newer, older)
+    except OSError:
+        pass  # log rotation must never crash the loop
+
+
 def _write_heartbeat():
     """Touch the heartbeat files so a stalled loop is visible without scraping logs.
 
@@ -100,6 +123,7 @@ def cmd_loop(interval: int):
     while True:
         try:
             _write_heartbeat()
+            _rotate_agent_log()
             if broker.is_market_open():
                 print(f"\n[{datetime.now().isoformat()}] cycle...")
                 signal.alarm(CYCLE_TIMEOUT_SECONDS)   # arm the watchdog

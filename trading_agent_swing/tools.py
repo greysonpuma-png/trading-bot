@@ -6,6 +6,7 @@ recent proposals) but the only WRITE tool is propose_trade(), which always passe
 through risk_layer before doing anything. There is no direct "submit_order" tool
 the LLM can call.
 """
+import functools
 import json
 import os
 from datetime import datetime
@@ -23,6 +24,35 @@ os.makedirs(CONFIG.log_dir, exist_ok=True)
 _proposals_file = os.path.join(CONFIG.log_dir, "proposals.jsonl")
 
 
+# ── intra-cycle cache ────────────────────────────────────────────────────────
+# Within ONE cycle the three stages re-fetch the same market data many times
+# (get_bars/get_news/get_quote were each called ~8-10x per cycle). Market data
+# is effectively constant over the seconds a cycle takes, so we fetch each
+# unique call once and reuse it, then clear at the start of the next cycle.
+#
+# SAFETY: only the LLM-FACING read tools are cached. The binding risk checks in
+# risk_layer.py call the broker directly (not these functions) with LIVE data,
+# so caching here cannot weaken a safety check or change what actually executes
+# — it only saves redundant API calls. Account/position state is NOT cached
+# because it mutates when the bot trades mid-cycle.
+_cycle_cache = {}
+
+
+def clear_cycle_cache():
+    """Call at the start of each cycle so stale market data never crosses cycles."""
+    _cycle_cache.clear()
+
+
+def _cycle_cached(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        key = (fn.__name__, args, tuple(sorted(kwargs.items())))
+        if key not in _cycle_cache:
+            _cycle_cache[key] = fn(*args, **kwargs)
+        return _cycle_cache[key]
+    return wrapper
+
+
 # ===== read-only tools =====
 
 def get_account() -> dict:
@@ -35,16 +65,19 @@ def get_positions() -> list:
     return _broker.get_positions()
 
 
+@_cycle_cached
 def get_quote(symbol: str) -> dict:
     """Latest bid/ask for a symbol."""
     return _broker.get_quote(symbol.upper())
 
 
+@_cycle_cached
 def get_bars(symbol: str, timeframe: str = "1Day", limit: int = 30) -> list:
     """Historical OHLCV bars. timeframe: 1Min, 5Min, 15Min, 1Hour, 1Day."""
     return _broker.get_bars(symbol.upper(), timeframe, min(limit, 100))
 
 
+@_cycle_cached
 def get_news(symbol: str, limit: int = 5, days_back: int = 7) -> list:
     """Recent news headlines for a symbol. Use this to understand WHY a stock is moving."""
     return _broker.get_news(symbol.upper(), limit=limit, days_back=days_back)
@@ -82,6 +115,7 @@ def get_recent_proposals(limit: int = 10) -> list:
     return rows[-max(1, min(limit, 50)):]
 
 
+@_cycle_cached
 def get_market_regime() -> dict:
     """Assess the BROAD MARKET regime using SPY versus its 50- and 200-day moving
     averages. Call this at the START of every cycle. The regime should shape how
@@ -119,6 +153,7 @@ def get_market_regime() -> dict:
     }
 
 
+@_cycle_cached
 def get_volatility(symbol: str, risk_budget_usd: float = 150.0) -> dict:
     """Measure a symbol's volatility (14-day ATR) and suggest a volatility-aware
     stop price, take-profit price, and share count so that EACH trade risks

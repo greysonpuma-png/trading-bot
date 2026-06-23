@@ -80,3 +80,41 @@ def test_force_session_timeout_respects_explicit():
     _force_session_timeout(s)
     s.request("GET", "http://example.com", timeout=5)
     assert s.last_kwargs["timeout"] == 5
+
+
+# ─── Intra-cycle cache (efficiency, must stay behavior-neutral) ──────────────
+
+def test_cycle_cache_dedups_identical_calls():
+    """Identical cached-tool calls within a cycle hit the underlying source once."""
+    import tools
+
+    hits = {"n": 0}
+
+    @tools._cycle_cached
+    def fake_fetch(symbol):
+        hits["n"] += 1
+        return {"symbol": symbol}
+
+    tools.clear_cycle_cache()
+    fake_fetch("SPY"); fake_fetch("SPY"); fake_fetch("SPY")
+    assert hits["n"] == 1, "3 identical calls should fetch once"
+    fake_fetch("AAPL")
+    assert hits["n"] == 2, "a different arg should fetch again"
+
+
+def test_cycle_cache_clears_between_cycles():
+    """clear_cycle_cache() must force a fresh fetch — no stale data across cycles."""
+    import tools
+
+    hits = {"n": 0}
+
+    @tools._cycle_cached
+    def fake_fetch(symbol):
+        hits["n"] += 1
+        return {"symbol": symbol}
+
+    tools.clear_cycle_cache()
+    fake_fetch("SPY")
+    tools.clear_cycle_cache()
+    fake_fetch("SPY")
+    assert hits["n"] == 2, "after clear, the same call must fetch again"
