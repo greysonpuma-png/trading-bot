@@ -4,10 +4,10 @@ Thin wrapper around the Alpaca Trading + Data APIs.
 The same code works for paper and live — only the API keys and `paper=` flag change.
 """
 import socket
-# Set BEFORE constructing any HTTP clients below. alpaca-py has no built-in
-# request timeout; without this, a stalled TCP connection hangs the bot's
-# main loop indefinitely. Process-global, so Gemini and anything else that
-# opens sockets in this process also get a sane default.
+# A process-global socket default as a weak backstop. NOTE: requests/urllib3
+# (which alpaca-py uses) does NOT reliably honor this, so it is NOT sufficient
+# on its own — see _force_session_timeout below for the real per-request fix,
+# and main.py's SIGALRM cycle deadline for the catch-all.
 socket.setdefaulttimeout(60)
 
 from datetime import datetime, timedelta
@@ -20,6 +20,30 @@ from alpaca.data.requests import StockBarsRequest, StockLatestQuoteRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 from config import CONFIG
+
+# How long any single Alpaca HTTP request may take before it fails fast.
+# alpaca-py never passes a timeout to requests, so without this a stalled
+# response blocks forever (root cause of the bot's multi-day hangs).
+ALPACA_REQUEST_TIMEOUT = 30  # seconds
+
+
+def _force_session_timeout(session, timeout: float = ALPACA_REQUEST_TIMEOUT):
+    """Wrap a requests.Session so every call gets a default timeout.
+
+    alpaca-py builds its own Session and calls session.request(...) with no
+    timeout. We wrap that method to inject one unless the caller set its own.
+    A (connect, read) tuple means: fail if no connection in `timeout`s OR no
+    bytes received for `timeout`s — the read half is what catches a server
+    that accepts the connection then goes silent.
+    """
+    original_request = session.request
+
+    def request_with_timeout(*args, **kwargs):
+        kwargs.setdefault("timeout", (timeout, timeout))
+        return original_request(*args, **kwargs)
+
+    session.request = request_with_timeout
+    return session
 
 
 class Broker:
@@ -38,6 +62,10 @@ class Broker:
             CONFIG.alpaca_api_key,
             CONFIG.alpaca_secret_key,
         )
+        # Inject a per-request timeout into both clients' HTTP sessions so a
+        # silent/stalled Alpaca response fails fast instead of hanging the loop.
+        _force_session_timeout(self.trading._session)
+        _force_session_timeout(self.data._session)
 
     def get_account(self) -> dict:
         a = self.trading.get_account()

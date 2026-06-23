@@ -8,6 +8,7 @@ Usage:
     python main.py panic        # emergency: flatten all positions
 """
 import os
+import signal
 import sys
 import time
 import traceback
@@ -16,6 +17,22 @@ from datetime import datetime
 from config import CONFIG
 from broker import Broker
 from agent import TradingAgent
+
+
+# Hard ceiling on how long a single cycle may run. A normal cycle is seconds to
+# a couple of minutes; anything past this is a hang (a wedged network call, a
+# half-open socket after the Mac slept, etc.). SIGALRM is an OS-level alarm that
+# interrupts even a C-level blocking read, so it is the catch-all that guarantees
+# the loop can never freeze indefinitely regardless of WHAT hangs underneath.
+CYCLE_TIMEOUT_SECONDS = 300
+
+
+class CycleTimeout(Exception):
+    """Raised when a single cycle exceeds CYCLE_TIMEOUT_SECONDS."""
+
+
+def _on_cycle_alarm(signum, frame):
+    raise CycleTimeout(f"cycle exceeded {CYCLE_TIMEOUT_SECONDS}s — aborting and retrying next loop")
 
 
 def _write_heartbeat():
@@ -76,21 +93,30 @@ def cmd_loop(interval: int):
     confirm_live()
     broker = Broker()
     agent = TradingAgent()
+    # Register the per-cycle watchdog alarm (Unix main thread only — that's us).
+    signal.signal(signal.SIGALRM, _on_cycle_alarm)
     print(f"loop mode, interval {interval}s. ctrl+C to stop.")
+    print(f"cycle watchdog: {CYCLE_TIMEOUT_SECONDS}s hard timeout per cycle.")
     while True:
         try:
             _write_heartbeat()
             if broker.is_market_open():
                 print(f"\n[{datetime.now().isoformat()}] cycle...")
-                out = agent.run_once()
+                signal.alarm(CYCLE_TIMEOUT_SECONDS)   # arm the watchdog
+                try:
+                    out = agent.run_once()
+                finally:
+                    signal.alarm(0)                   # always disarm, even on error
                 print(out)
             else:
                 print(f"[{datetime.now().isoformat()}] market closed, sleeping.")
             time.sleep(interval)
         except KeyboardInterrupt:
+            signal.alarm(0)
             print("\nstopping.")
             return
         except Exception as e:
+            signal.alarm(0)
             ts = datetime.now().isoformat()
             print(f"[{ts}] cycle error: {type(e).__name__}: {e}")
             print(traceback.format_exc())
