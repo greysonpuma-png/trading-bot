@@ -51,6 +51,16 @@ REGIME_MIN_PERIODS = 50
 TRAIL_HARD_STOP_PCT = 0.07
 TRAIL_PCT           = 0.10
 
+# Exp5 (core/satellite, 2026-06-23 — institutional partial-profit technique):
+# sell half the position at +SCALE_TARGET_PCT to bank gains, then ride the
+# remaining "core" half on a trailing stop. LEARNING EXERCISE — train-only.
+SCALE_TARGET_PCT    = 0.10
+
+# Leverage multiplier for the --leverage risk demonstration (default 1.0 = none).
+# Buys LEVERAGE x the cash position. Purely to SHOW that leverage scales returns
+# AND drawdowns together — it does not create risk-adjusted edge.
+LEVERAGE = 1.0
+
 # Train/holdout split. w=0 is the MOST RECENT window, w=N_WINDOWS-1 the OLDEST.
 # Tune and develop hypotheses against TRAIN. Reserve HOLDOUT for ONE-TIME final
 # validation of a candidate parameter set — repeatedly peeking at holdout
@@ -108,9 +118,21 @@ def _simulate_window(window_df: pd.DataFrame, regime_mask=None, entry_mode: str 
     entry_price = 0.0
     entry_idx   = -1
     peak_close  = 0.0
+    scaled_out  = False           # core/satellite: has the satellite half been sold?
     stop = target = 0.0
     trades = []
     equity = []
+
+    def _record(qty, exit_px, reason):
+        """Book a (partial) sale: add cash, log the trade, reduce the holding."""
+        nonlocal cash, shares
+        cash += qty * exit_px
+        trades.append({
+            "pl_pct":     (exit_px / entry_price - 1) * 100,
+            "pl_dollars": qty * (exit_px - entry_price),
+            "reason":     reason,
+        })
+        shares -= qty
 
     for i in range(len(df)):
         row   = df.iloc[i]
@@ -125,11 +147,12 @@ def _simulate_window(window_df: pd.DataFrame, regime_mask=None, entry_mode: str 
                     in_uptrend = price > row["ma_slow"]
                     near_ma    = row["ma_fast"] <= price <= row["ma_fast"] * (1 + PULLBACK_BAND)
                     if ma_rising and in_uptrend and near_ma:
-                        shares = int(cash // price)
+                        shares = int(cash * LEVERAGE // price)
                         if shares > 0:
                             entry_price = price
                             entry_idx   = i
                             peak_close  = price
+                            scaled_out  = False
                             stop        = entry_price * (1 - STOP_PCT)
                             target      = entry_price * (1 + TARGET_PCT)
                             cash       -= shares * price
@@ -143,14 +166,39 @@ def _simulate_window(window_df: pd.DataFrame, regime_mask=None, entry_mode: str 
                         and not pd.isna(row["ma_slow"]) and price > row["ma_slow"]):
                     prior_high_max = df["high"].iloc[i - BREAKOUT_LOOKBACK:i].max()
                     if row["high"] >= prior_high_max:
-                        shares = int(cash // price)
+                        shares = int(cash * LEVERAGE // price)
                         if shares > 0:
                             entry_price = price
                             entry_idx   = i
                             peak_close  = price
+                            scaled_out  = False
                             stop        = entry_price * (1 - STOP_PCT)
                             target      = entry_price * (1 + TARGET_PCT)
                             cash       -= shares * price
+        elif exit_mode == "core_satellite":
+            # Exp5: cut the whole position at the -7% hard floor (loser). Once it
+            # reaches +SCALE_TARGET_PCT, sell HALF (the "satellite") to bank gains;
+            # ride the remaining "core" half on a 10% trailing stop with no cap.
+            hard_floor = entry_price * (1 - TRAIL_HARD_STOP_PCT)
+            if not scaled_out:
+                scale_target = entry_price * (1 + SCALE_TARGET_PCT)
+                if row["low"] <= hard_floor:
+                    _record(shares, hard_floor, "hard_stop")          # cut full loser
+                elif row["high"] >= scale_target:
+                    half = shares // 2
+                    if half > 0:
+                        _record(half, scale_target, "satellite")      # bank half
+                    scaled_out = True
+                    peak_close = max(peak_close, price)
+                else:
+                    peak_close = max(peak_close, price)
+            else:                                                      # ride the core half
+                trail_line = peak_close * (1 - TRAIL_PCT)
+                if row["low"] <= trail_line:
+                    _record(shares, trail_line, "core_trail")
+                else:
+                    peak_close = max(peak_close, price)
+
         else:
             exit_price = None
             reason     = None
@@ -252,8 +300,10 @@ def main():
                         help="Which window set to evaluate (default: train)")
     parser.add_argument("--entry",   choices=["pullback", "breakout", "both"], default="pullback",
                         help="Entry rule (default: pullback — original behavior)")
-    parser.add_argument("--exit",    choices=["bracket", "trailing"], default="bracket",
+    parser.add_argument("--exit",    choices=["bracket", "trailing", "core_satellite"], default="bracket",
                         help="Exit rule (default: bracket — original behavior)")
+    parser.add_argument("--leverage", type=float, default=1.0,
+                        help="Risk-demo: buy this multiple of cash per position (default 1.0)")
     parser.add_argument("symbols",   nargs="*",  help="Symbols (default: whole whitelist)")
     args = parser.parse_args()
 
@@ -268,10 +318,11 @@ def main():
 
     # Apply CLI overrides on top of the defaults imported from backtest.py.
     # This lets us A/B parameter changes without editing files between runs.
-    global STOP_PCT, TARGET_PCT, MAX_HOLD_DAYS
+    global STOP_PCT, TARGET_PCT, MAX_HOLD_DAYS, LEVERAGE
     if args.target is not None: TARGET_PCT    = args.target / 100
     if args.stop   is not None: STOP_PCT      = args.stop / 100
     if args.hold   is not None: MAX_HOLD_DAYS = args.hold
+    LEVERAGE = args.leverage
 
     symbols = [s.upper() for s in args.symbols] if args.symbols else list(CONFIG.allowed_symbols)
 
