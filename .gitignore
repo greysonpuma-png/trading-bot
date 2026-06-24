@@ -1,0 +1,22 @@
+# Secrets — NEVER commit. Real API keys live in .env; .env.example is the template.
+.env
+*/.env
+
+# Virtual environments (including renamed backups like .venv-py39-backup)
+.venv*/
+*/.venv*/
+
+# Runtime logs (trading history, heartbeat, P&L snapshots)
+logs/
+*/logs/
+
+# Python cruft
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Old day-trading variant — superseded by trading_agent_swing/
+trading_agent/
