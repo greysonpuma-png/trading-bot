@@ -1,165 +1,322 @@
 # Trading Bot — Handoff Doc
 
-_Last updated: 2026-06-24. This is the "read me first" status doc — where the
-project stands, how to run it, and what's intentionally being left alone._
+_Last updated: 2026-06-24. Read this first. It tells you exactly what the project
+is, exactly how to run it, exactly what each number should look like, and exactly
+what to do when something looks wrong._
+
+> **TL;DR for a hurried reader:** The bot is running on its own. Don't change
+> anything about how it trades. Around **September 3, 2026**, run one command
+> (`python forward_test.py`, §6) and look at one number (**alpha**). That number
+> decides what happens next. Everything else below is detail and troubleshooting.
 
 ---
 
-## 1. What this project is (in one paragraph)
-
-An autonomous LLM-driven **swing trading bot** that trades a **paper** (fake-money)
-Alpaca account. A Python screener finds candidate stocks; a 3-stage LLM pipeline
-(Position Manager → Scout → Risk Manager, running on Gemini 2.5 Flash) decides
-what to trade; a hard-coded Python **risk layer** vets every order before it
-reaches the broker. It runs hands-free on the MacBook — auto-starts at login,
-wakes the Mac before market open, and protects every position with broker-side
-stops. It is a **learning / research / portfolio project**, NOT a money-maker
-(see §3).
-
-Repo: https://github.com/greysonpuma-png/trading-bot
-Code lives in: `~/Documents/trading-bot/trading_agent_swing/`
+## TABLE OF CONTENTS
+1. What this project is
+2. The one thing you must understand (no edge)
+3. Exact current state (account, positions, settings)
+4. The September decision — exact date and exact rule
+5. The hard rules: what NOT to do, and why
+6. How to run it — every command, with the output you should expect
+7. Troubleshooting — symptom → check → fix
+8. The 10 risk checks (what the safety layer blocks)
+9. File map
+10. Glossary (plain-English definitions)
 
 ---
 
-## 2. Current status (2026-06-24)
+## 1. WHAT THIS PROJECT IS
 
-- **Bot:** running (paper mode). Verify anytime — see §5.
-- **Live experiment in progress:** "Exp4" — trailing-stop exits (let winners run,
-  cut losers). Switched on 2026-06-11. Being measured as alpha vs SPY.
-- **Forward-test scoreboard:** ~+1% alpha over ~9 trading days — **this is noise**,
-  far too short to mean anything. The real read is in September (see §4).
-- **Account:** ~$100k paper, roughly flat-to-slightly-up since inception.
-- **Code:** all committed and pushed; 30 automated tests passing.
+An autonomous LLM-driven **swing trading bot** trading a **paper** (fake-money)
+Alpaca account. Flow each cycle:
 
----
+1. A pure-Python **screener** scans 39 stocks for setups (no AI).
+2. A 3-stage AI pipeline decides what to do, each stage running Gemini 2.5 Flash:
+   - **Position Manager** — reviews holdings, decides hold/close.
+   - **Scout** — picks the single best new candidate, or passes.
+   - **Risk Manager** — sizes the trade and submits it.
+3. A hard-coded **risk layer** (`risk_layer.py`) vets every order before the broker
+   sees it (see §8).
+4. Filled positions get a broker-side **trailing stop** so they're protected even
+   if the bot or the Mac dies.
 
-## 3. The single most important thing to understand
+It runs hands-free: auto-starts at login, wakes the Mac before market open.
 
-**The strategy has no demonstrated edge.** We tested three structurally different
-strategies (daily pullback/breakout, weekly Donchian trend-following, sector
-rotation) with proper train/holdout walk-forward validation. **All three lost to
-just buying and holding SPY** out-of-sample. We also demonstrated that leverage,
-partial-profit-taking, and other "advanced" techniques reshape the *risk* of the
-returns but never create *edge*.
-
-**What this means for decisions:**
-- Do **NOT** flip the bot to real money (`ALPACA_PAPER=false`). The honest bar for
-  that is months of positive *forward* alpha + a tuition-sized loss budget + a
-  pre-committed stop rule — none of which are met.
-- Do **NOT** add risk (leverage, bigger size, looser stops) "to drive profits."
-  On a no-edge strategy that just loses faster — we proved this on the bot's own data.
-- The *value* of this project is the engineering + the rigorous methodology + the
-  honest negative result. That's a genuinely strong story for an internship or
-  grad-school interview. It is not a P&L story.
+- **GitHub:** https://github.com/greysonpuma-png/trading-bot
+- **Code folder:** `~/Documents/trading-bot/trading_agent_swing/`
+- **It is a learning / research / portfolio project.** Not a money-maker. See §2.
 
 ---
 
-## 4. The September decision point
+## 2. THE ONE THING YOU MUST UNDERSTAND
 
-We pre-committed to a clean forward test: don't change the strategy, let it run,
-and read the result at a fixed future date so the decision is made by data, not
-by impatience.
+**This strategy has no proven edge — it does not reliably beat just buying SPY.**
 
-- **When:** ~early September 2026 (≈60 trading days of forward data — the earliest
-  point worth reading; ~December = ~6 months = the real verdict).
-- **How:** run the scoreboard (see §5) and look at **alpha vs SPY**.
-- **Decision rule (pre-registered):**
-  - Sustained **positive** alpha vs SPY → Exp4 (trailing exits) may have merit;
-    keep running, consider the next honest step.
-  - **Negative** alpha → Exp4 is refuted, same as the backtests predicted. Stop.
-- Until then: **do not change the bot's trading logic.** Any change resets the
-  experiment and contaminates the comparison.
+We tested three completely different strategies (daily pullback/breakout, weekly
+Donchian trend-following, sector rotation) using proper out-of-sample validation.
+**All three lost to buying-and-holding SPY.** We also proved, on the bot's own
+data, that leverage and fancy exit techniques change the *risk* but never create
+*edge*.
+
+So the value of this project is the **engineering and the honest methodology**, not
+the profit. "I built an autonomous trading system, tested it rigorously, and proved
+the strategy doesn't beat the index" is a strong, honest story for an interview.
+It is not a "this makes money" story, and it should never be presented as one.
 
 ---
 
-## 5. How to operate it (commands)
+## 3. EXACT CURRENT STATE (snapshot 2026-06-24 — these numbers drift daily)
 
-**Activate first** (the one chunk to remember):
+**Account:** equity ≈ $100,687 · cash ≈ $66,196 · started at $100,000.
+
+**Open positions (8):**
+
+| Symbol | Shares | Entry | Recent price | Unrealized P/L |
+|--------|--------|-------|--------------|----------------|
+| GS  | 4  | $1015.79 | $1082.06 | +$265 |
+| HD  | 14 | $325.29  | $335.68  | +$145 |
+| JNJ | 50 | $233.81  | $241.62  | +$391 |
+| SPY | 2  | $734.34  | $736.26  | +$4   |
+| V   | 14 | $326.83  | $328.23  | +$20  |
+| WMT | 21 | $117.00  | $119.48  | +$52  |
+| XLI | 13 | $179.55  | $180.21  | +$9   |
+| XLV | 16 | $153.28  | $153.91  | +$10  |
+
+**Settings (in `trading_agent_swing/.env` and `config.py`) — do not change these
+during the experiment (§4):**
+
+| Setting | Value | Meaning |
+|---|---|---|
+| `ALPACA_PAPER` | `true` | Fake money. **Keep it true.** |
+| `EXIT_STYLE` | `trailing` | The experiment being tested. Don't change. |
+| `TRAIL_PERCENT` | `10` | Sell after a position falls 10% from its peak. |
+| `MODEL_PROVIDER` | `gemini` | Cloud LLM backend. |
+| `auto_execute` | `True` | Bot places trades itself (no manual approval). |
+| `max_position_size_usd` | `2500` | Most it will put in one position. |
+| `max_daily_loss_usd` | `500` | Stops trading for the day if down this much. |
+| `max_open_positions` | `8` | Most positions held at once (currently at 8). |
+| `max_positions_per_sector` | `3` | Diversification cap. |
+| `max_order_qty` | `100` | Max shares per order. |
+
+---
+
+## 4. THE SEPTEMBER DECISION — EXACT DATE AND RULE
+
+We pre-committed to a clean forward test so the decision is made by **data**, not
+by impatience or a good/bad week.
+
+- **Baseline (experiment start):** 2026-06-11, account ≈ $99,633.
+- **First meaningful read:** **~September 3, 2026** (≈60 trading days in — the
+  earliest point the numbers aren't pure noise).
+- **Full verdict:** **~December 11, 2026** (≈6 months / ~125 trading days).
+- **What to do on that date:** run `python forward_test.py` (§6) and read the
+  **ALPHA (acct − SPY)** line.
+
+**Decision rule (decided in advance, do not move the goalposts):**
+- **Alpha clearly positive** (e.g. > +2–3% and trending up) → the trailing-exit
+  change may have merit. Keep running; consider the next honest step.
+- **Alpha negative or ~zero** → the change is refuted, exactly as the backtests
+  predicted. Stop here; the bot has answered honestly.
+
+Before that date, **9 days or 9 weeks of green or red means nothing.** Do not react
+to it. The whole point of naming a date in advance is to not trade on emotion.
+
+---
+
+## 5. THE HARD RULES — WHAT NOT TO DO
+
+1. **Do NOT set `ALPACA_PAPER=false` (do not go to real money).** The bar is months
+   of *positive forward alpha* + money you can afford to lose entirely + a written
+   stop rule. None are met. There is no near-term path to this.
+2. **Do NOT add risk to "drive profits"** — no leverage, no bigger `max_position_size_usd`,
+   no looser stops. We proved on the bot's own data that this makes a no-edge
+   strategy lose *faster*, not win. (Demo: `python walkforward.py --leverage 3`.)
+3. **Do NOT change the trading logic before the September read.** Any change resets
+   the experiment and throws away the only clean test we have.
+4. **Do NOT add new "advanced strategies" expecting profit.** We tested several;
+   they don't beat SPY, and the historical data is now over-tested.
+
+Safe to do anytime: read the dashboard, run the scoreboard, restart the bot,
+run the tests, read the logs.
+
+---
+
+## 6. HOW TO RUN IT — COMMANDS + EXPECTED OUTPUT
+
+**The activate chunk (always run this first in a new Terminal window):**
 ```bash
 cd ~/Documents/trading-bot/trading_agent_swing && source .venv/bin/activate
 ```
+You'll know it worked when your prompt shows `(.venv)` at the start.
 
-**Is the bot alive?** Heartbeat timestamp should be within ~1 hour during market hours:
+---
+
+**A. Is the bot alive?**
 ```bash
 cat ~/Documents/trading-bot/trading_agent_swing/logs/heartbeat.txt && echo
 ```
+- **Expected (good):** a timestamp within the last ~1 hour during market hours.
+  Example: `2026-06-24T11:13:13` when it's around 11–12am.
+- **Bad:** timestamp more than ~2 hours old during market hours (7:30am–2:00pm
+  Mountain). → go to §7.
 
-**See the dashboard** (positions, P&L, SPY benchmark chart, bot-health banner):
+---
+
+**B. See the dashboard** (the nice visual view):
 ```bash
 cd ~/Documents/trading-bot/trading_agent_swing && source .venv/bin/activate && streamlit run dashboard.py
 ```
-Opens http://localhost:8501. Ctrl+C in that terminal to stop it (this does NOT stop the bot).
+- A browser tab opens at http://localhost:8501.
+- **Top banner:** green "Bot alive" = good; red = see §7.
+- **Sidebar:** equity, cash, and each open position with live P/L.
+- **Main chart "Account vs SPY":** the line that matters. Above SPY = beating it.
+- To close it: press **Ctrl+C** in that Terminal. (This stops the dashboard only,
+  NOT the bot.)
 
-**Forward-test scoreboard** (the September read):
+---
+
+**C. The forward-test scoreboard** (the September read):
 ```bash
 cd ~/Documents/trading-bot/trading_agent_swing && source .venv/bin/activate && python forward_test.py
 ```
+Expected output looks like:
+```
+ EXP4 FORWARD TEST — trailing exits, live paper account
+  baseline:           2026-06-11  ($99,633.45)
+  trading days since: 9
+  account:            $100,356.81  (+0.73%)
+  SPY buy-and-hold:   -0.33%
+  ALPHA (acct - SPY): +1.06%
+  note: 9 trading days is NOISE...
+```
+The number you care about is **ALPHA**. Ignore it entirely until ~Sept 3 (§4).
 
-**Restart the bot** (if it died, or after a code change):
+---
+
+**D. Restart the bot** (after it dies, or after any code change):
 ```bash
 pkill -f "main.py loop"; pkill -f "caffeinate -i python"
 open ~/Documents/trading-bot/start_bot.command
 ```
-A Terminal window opens — that window *is* the bot. Leave it open; don't type in it.
+- A new Terminal window opens with a banner: `SWING Trading Agent | mode: PAPER`.
+  **That window IS the bot. Leave it open. Never type into it.**
+- Verify with command A — the heartbeat should be fresh within ~30 seconds.
 
-**Run the tests** (after any code change to the risk layer or core files):
+---
+
+**E. Run the tests** (after editing any code; all should pass):
 ```bash
 cd ~/Documents/trading-bot/trading_agent_swing && source .venv/bin/activate && python -m pytest -q
 ```
+- **Expected:** `30 passed` (a number may grow if tests are added).
+- **Bad:** any "failed" → a safety check broke. Do NOT run the bot until fixed.
 
-**Emergency: close everything:**
+---
+
+**F. Emergency — sell everything now:**
 ```bash
 cd ~/Documents/trading-bot/trading_agent_swing && source .venv/bin/activate && python main.py panic
 ```
+Type `YES` when asked. Flattens all positions and cancels all orders.
 
 ---
 
-## 6. Known limitations (by design, not bugs)
+## 7. TROUBLESHOOTING — SYMPTOM → CHECK → FIX
 
-- **Sleeping laptop = coverage gaps.** The bot and its health-watchdog are local
-  processes. If the Mac sleeps (lid closed) or shuts down, the bot is simply off
-  until it's awake again. Auto-wake covers weekday market opens; weekends/overnight
-  with the lid closed will have gaps. Positions stay safe regardless — the stops
-  live at Alpaca, not on the Mac. The real fix (a cloud host) is deferred until
-  September says whether the strategy is worth hosting.
-- **Hangs are now bounded, not eliminated.** A per-cycle 5-minute watchdog means a
-  hang self-recovers within ~5 min while the Mac is awake. (Three multi-day silent
-  hangs earlier were traced to a missing network timeout and fixed.)
-- **Two leftover exit orders.** A couple of older positions (e.g. WMT, V) still
-  carry original fixed take-profit orders from before the June 11 switch; newer
-  positions use trailing stops. Minor inconsistency, harmless (extra protection).
+**Heartbeat is stale (older than ~2 hours during market hours):**
+- *Most common cause:* the Mac slept (lid closed / overnight / weekend). The bot
+  freezes while the Mac sleeps and resumes on wake. If you just opened the laptop,
+  wait ~2 minutes and re-check command A — it should refresh on its own.
+- *If it stays stale with the Mac awake and market open:* the bot died or hung.
+  **Fix:** restart it (§6D).
+- *Either way, your money is safe* — the stops live at Alpaca, not on the Mac.
+
+**No bot window anywhere / `cat heartbeat` shows a very old date:**
+- The bot isn't running. **Fix:** restart it (§6D).
+
+**Dashboard shows a red "Bot may be hung" banner:**
+- Same as a stale heartbeat. Restart (§6D).
+
+**`streamlit: command not found`:**
+- You forgot the activate chunk. Run the `cd ... && source .venv/bin/activate`
+  line first, then the streamlit command (§6B).
+
+**A command pastes weirdly / shows `[200~`:**
+- A copy-paste glitch. Type the command by hand, or paste it as a single line.
+
+**You see "market closed, sleeping" over and over:**
+- Normal. The market is closed (nights, weekends, holidays). The bot only trades
+  during market hours. Nothing is wrong.
 
 ---
 
-## 7. File map (in `trading_agent_swing/`)
+## 8. THE 10 RISK CHECKS (what `risk_layer.py` blocks)
 
-| file | what it is |
+Every proposed order must pass ALL of these or it is rejected before reaching the
+broker. The LLM cannot override them — they are plain Python:
+
+1. Symbol must be on the 39-name approved whitelist.
+2. Quantity must be positive and ≤ `max_order_qty` (100).
+3. Market must be open.
+4. Daily loss must be under `max_daily_loss_usd` ($500) — else trading halts for the day.
+5. Position value must be ≤ `max_position_size_usd` ($2500).
+6. Must not exceed `max_open_positions` (8).
+7. No shorting; can't sell shares you don't own.
+8. Must have enough buying power.
+9. No more than `max_positions_per_sector` (3) in one sector.
+10. Exit protection must be valid (in trailing mode: trail % within 3–15%).
+
+These are covered by automated tests in `test_risk_layer.py` (run with §6E).
+
+---
+
+## 9. FILE MAP (inside `trading_agent_swing/`)
+
+| File | What it is |
 |---|---|
-| `risk_layer.py` | **Most important.** 10 hard checks every order must pass. |
-| `test_risk_layer.py` / `test_resilience.py` | 30 tests proving the safety + anti-hang logic. |
-| `agent.py` | The 3-stage LLM pipeline (Position Manager → Scout → Risk Manager). |
-| `tools.py` | The 11 functions the LLM can call (+ intra-cycle cache). |
-| `screener.py` | Pure-Python candidate finder (no LLM). |
-| `broker.py` | Alpaca wrapper (paper or live). Has the network-timeout fix. |
-| `gemini_client.py` | Gemini backend, mimics the Ollama interface. |
-| `main.py` | Entry point + the loop + the SIGALRM cycle watchdog + log rotation. |
-| `config.py` | All knobs: risk limits, `EXIT_STYLE`, symbol list. Reads `.env`. |
-| `dashboard.py` | Streamlit dashboard. |
-| `walkforward*.py` | The 3 walk-forward backtesters (research, not live). |
-| `forward_test.py` | Live alpha-vs-SPY scoreboard for Exp4. |
-| `backtest.py` | Single-window backtest (quick checks). |
-| `logs/` | heartbeat, agent trace, proposals/journal/picks (the trade record). |
+| `risk_layer.py` | **Most important.** The 10 hard checks (§8). |
+| `test_risk_layer.py`, `test_resilience.py` | 30 tests for safety + anti-hang logic. |
+| `agent.py` | The 3-stage AI pipeline + per-cycle prompts. |
+| `tools.py` | The 11 functions the AI can call (+ per-cycle data cache). |
+| `screener.py` | Pure-Python candidate finder (no AI). |
+| `broker.py` | Alpaca connection (has the network-timeout fix). |
+| `gemini_client.py` | Gemini AI backend. |
+| `main.py` | The loop + 5-minute hang watchdog + log rotation. |
+| `config.py` | All settings/risk limits; reads `.env`. |
+| `dashboard.py` | The Streamlit dashboard. |
+| `forward_test.py` | The September alpha-vs-SPY scoreboard. |
+| `walkforward*.py` | The 3 research backtesters (not live). |
+| `backtest.py` | Quick single-window backtest. |
+| `logs/` | heartbeat, AI trace, and the trade record (proposals/journal/picks). |
+| `.env` | Secrets + settings. **Never commit this to GitHub.** |
 
-Operational scripts in the repo root: `start_bot.command`, `setup_autostart.sh`,
-`setup_market_wake.sh`, `setup_health_alert.sh` (+ matching `stop_*` scripts).
-
-Config: secrets live in `trading_agent_swing/.env` (NOT in git). `EXIT_STYLE=trailing`,
-`TRAIL_PERCENT=10`, `ALPACA_PAPER=true`, `MODEL_PROVIDER=gemini`.
+Repo-root scripts: `start_bot.command`, `setup_autostart.sh`, `setup_market_wake.sh`,
+`setup_health_alert.sh` (+ matching `stop_*` versions).
 
 ---
 
-## 8. If you only do one thing
+## 10. GLOSSARY (plain English)
 
-Leave it alone until September, then run `forward_test.py` and read the alpha.
-Everything else — adding strategies, leverage, going live — has been tested or
-reasoned through and the answer is "not until the data earns it."
+- **Alpha** — how much you beat (or lost to) SPY. +2% alpha = you did 2% better
+  than just holding SPY. This is the only scoreboard that matters here.
+- **SPY** — an ETF that tracks the S&P 500. "Buying SPY and holding" is the simple
+  benchmark the bot is trying (and so far failing) to beat.
+- **Paper trading** — trading with fake money on real market data. Zero real
+  dollars at risk.
+- **Trailing stop** — an order that follows the price up and sells if it falls a
+  set % (here 10%) from its highest point. Locks in gains, caps losses.
+- **Edge** — a real, repeatable advantage that makes a strategy beat the benchmark.
+  This strategy doesn't have one. Without edge, no amount of risk or cleverness
+  produces profit.
+- **Heartbeat** — a timestamp file the bot updates every loop, so you can tell it's
+  alive without reading logs.
+- **Walk-forward / out-of-sample test** — testing a strategy on data it was never
+  tuned on. The honest way to tell if a backtest is real or just curve-fit.
+- **Forward test** — testing live, going forward in time (what the paper bot is
+  doing now). The cleanest test of all.
+
+---
+
+## IF YOU ONLY REMEMBER ONE THING
+Leave the bot alone until ~September 3, 2026. Then run `python forward_test.py` and
+read the alpha. That one number — not a hunch, not a good week — decides what's next.
