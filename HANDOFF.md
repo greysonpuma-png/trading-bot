@@ -44,24 +44,29 @@ It runs hands-free: auto-starts at login, wakes the Mac before market open.
 
 - **GitHub:** https://github.com/greysonpuma-png/trading-bot
 - **Code folder:** `~/Documents/trading-bot/trading_agent_swing/`
-- **It is a learning / research / portfolio project.** Not a money-maker. See §2.
+- **Goal:** to be a **profitable** trading system — to beat a simple buy-and-hold
+  of SPY. Whether it can is being tested live right now (see §2 and §4).
 
 ---
 
-## 2. THE ONE THING YOU MUST UNDERSTAND
+## 2. THE GOAL — AND THE HONEST STATUS
 
-**This strategy has no proven edge — it does not reliably beat just buying SPY.**
+**The goal of this bot is to be profitable: to beat a simple buy-and-hold of SPY.**
 
-We tested three completely different strategies (daily pullback/breakout, weekly
-Donchian trend-following, sector rotation) using proper out-of-sample validation.
-**All three lost to buying-and-holding SPY.** We also proved, on the bot's own
-data, that leverage and fancy exit techniques change the *risk* but never create
-*edge*.
+**Honest status as of 2026-06-24: it has not done that yet.** We tested three
+completely different strategies (daily pullback/breakout, weekly Donchian
+trend-following, sector rotation) using proper out-of-sample validation, and all
+three underperformed buy-and-hold SPY. We also showed, on the bot's own data, that
+leverage and fancy exit techniques change the *risk* of the returns but do not
+create *edge* — the repeatable advantage that actually produces profit.
 
-So the value of this project is the **engineering and the honest methodology**, not
-the profit. "I built an autonomous trading system, tested it rigorously, and proved
-the strategy doesn't beat the index" is a strong, honest story for an interview.
-It is not a "this makes money" story, and it should never be presented as one.
+This is not "give up." It means the path to profitability runs through finding a
+real, validated edge — **not** through piling more risk or cleverness onto a
+strategy that hasn't shown one (that just loses faster; we proved it). The live
+forward test (§4) is the current attempt: it measures whether the trailing-exit
+version can beat SPY going forward. **Until that shows positive alpha over a
+meaningful stretch, treat the bot as _not yet profitable_, and do not put real
+money behind it (§5).** The honest scoreboard is alpha vs SPY — nothing else.
 
 ---
 
@@ -306,8 +311,9 @@ Repo-root scripts: `start_bot.command`, `setup_autostart.sh`, `setup_market_wake
 - **Trailing stop** — an order that follows the price up and sells if it falls a
   set % (here 10%) from its highest point. Locks in gains, caps losses.
 - **Edge** — a real, repeatable advantage that makes a strategy beat the benchmark.
-  This strategy doesn't have one. Without edge, no amount of risk or cleverness
-  produces profit.
+  This strategy hasn't demonstrated one yet — which is exactly what the forward
+  test (§4) is checking. Without edge, no amount of risk or cleverness produces
+  profit, so finding edge is the only real path to the profitability goal.
 - **Heartbeat** — a timestamp file the bot updates every loop, so you can tell it's
   alive without reading logs.
 - **Walk-forward / out-of-sample test** — testing a strategy on data it was never
