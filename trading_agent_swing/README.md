@@ -15,6 +15,15 @@ and what the data actually said.
 This is — explicitly — a learning project. The value is in the methodology
 and infrastructure, not in the simulated P&L.
 
+**Current status (July 2026):** a fourth, pre-registered experiment —
+trailing-stop exits — is running live on the paper account as a true
+out-of-sample forward test (baseline 2026-06-11; first meaningful read
+~Sept 3, 2026; full verdict ~Dec 2026). The scoreboard is one command
+(`python forward_test.py`) and one number (alpha vs SPY), with the
+decision rule written down in advance so the result can't be
+rationalized after the fact. See `HANDOFF.md` at the repo root for the
+operating rules while the test runs.
+
 ---
 
 ## TL;DR for someone scanning this in 60 seconds
@@ -80,17 +89,17 @@ noise with real money.
                                  │
                                  ▼
                        ┌────────────────────┐
-                       │   broker.py        │   ← submits BRACKET order
-                       │   (Alpaca API)     │     (stop + target live at broker)
-                       └────────────────────┘
+                       │   broker.py        │   ← submits protected order
+                       │   (Alpaca API)     │     (bracket or trailing stop,
+                       └────────────────────┘      held server-side at broker)
 ```
 
 **The 10 risk checks** (`risk_layer.py`):
 approved-symbol whitelist, long-only enforcement (no shorts), per-position
 dollar cap, daily-loss circuit breaker, max open positions, max share count,
 sector concentration cap (no more than 3 positions in one sector), market-
-hours check, bracket sanity (stops between 3–15%, R:R ≥ 1.5), sufficient
-buying power.
+hours check, exit-protection sanity (bracket mode: stop 3–15% and R:R ≥ 1.5;
+trailing mode: trail % within 3–15%), sufficient buying power.
 
 **The 11 LLM tools** (`tools.py`): account / positions / quotes / bars /
 news / recent-proposals / market-regime detection / ATR-based volatility-
@@ -110,6 +119,57 @@ and restricted tool set) made the system dramatically more reliable.
 Each stage runs in sequence per cycle. The Scout cannot execute trades; the
 Risk Manager cannot select symbols. Tool restrictions are enforced in code,
 not just in the prompt.
+
+---
+
+## Keeping an unattended bot alive on a laptop (harder than the trading)
+
+The most instructive engineering in this project wasn't the strategy — it
+was making a long-running process survive real-world conditions on a
+consumer MacBook. Each layer below exists because something actually failed
+without it:
+
+1. **Broker-side exits, always.** Every position's stop lives at Alpaca,
+   not in the bot. A dead bot, a sleeping Mac, or a crashed LLM provider
+   never leaves a position unprotected. This is the load-bearing safety
+   decision; everything else is convenience.
+
+2. **macOS TCC vs. background agents.** A launchd background agent cannot
+   read `~/Documents`, so the bot can't run as a proper daemon from its
+   project folder. It runs as a Login Item in a visible Terminal window
+   instead, and writes its heartbeat to TWO places — `logs/heartbeat.txt`
+   (for the dashboard) and `~/.trading_bot_heartbeat` (TCC-free, for
+   watchdogs).
+
+3. **Sleep kills TCP connections, and hidden no-timeout calls hang forever.**
+   The Mac sleeping mid-cycle leaves dead sockets behind. The first fix
+   (`socket.setdefaulttimeout`) turned out to be a no-op for `requests`/
+   urllib3 — alpaca-py issues session requests with NO timeout. Real fixes:
+   force (30s, 30s) timeouts onto both Alpaca clients' sessions, plus a
+   SIGALRM watchdog that hard-aborts any cycle exceeding 300s.
+
+4. **The watchdog gap you only find in production.** After the SIGALRM fix,
+   the bot still hung twice — both times pre-market. Root cause: the
+   market-open check runs *before* the alarm is armed, so a dead-connection
+   hang in that one call was unprotected. Interim mitigation (to avoid
+   changing bot code mid-forward-test): an external launchd watchdog
+   (`setup_auto_restart.sh`) that kills and relaunches the bot if the
+   heartbeat goes >90 min stale during market hours.
+
+5. **Auto-start + auto-wake.** Login Item relaunches the bot at login;
+   `pmset` schedules the Mac to wake before market open on weekdays.
+   Limitation accepted: a closed-lid laptop is still a coverage gap. Only
+   an always-on host removes it — deferred until the forward test says the
+   strategy is worth hosting.
+
+**A bug worth confessing:** for the project's first weeks, `broker.get_bars`
+passed `limit` to Alpaca, which truncates from the *oldest* end of the
+window — so every history call silently dropped the most recent ~2 weeks of
+bars. The LLM stages and screener were reading two-week-stale charts while
+quotes were live. Nothing crashed; the bot happily traded on it. Found only
+by noticing backtest windows ended earlier than labeled. Lesson: data
+pipelines fail silently, and "it runs without errors" says nothing about
+whether the inputs are right.
 
 ---
 
@@ -176,6 +236,7 @@ iteration so you can verify it hasn't silently hung.
 | `broker.py`            | Alpaca wrapper. Same code paper or live. Supports day & week bars  |
 | `risk_layer.py`        | **Most important file.** 10 hard checks the LLM cannot bypass      |
 | `test_risk_layer.py`   | Tests proving every risk check rejects what it must (`pytest`)     |
+| `test_resilience.py`   | Tests for the anti-hang machinery (timeouts, cycle watchdog)       |
 | `screener.py`          | Pure-Python pre-screener — no LLM                                  |
 | `tools.py`             | 11 tool definitions exposed to the LLM via function calling        |
 | `agent.py`             | 3-stage agent loop: Position Manager → Scout → Risk Manager        |
@@ -187,9 +248,12 @@ iteration so you can verify it hasn't silently hung.
 | `walkforward.py`       | Walk-forward backtester for the daily pullback + breakout framework |
 | `walkforward_weekly.py`| Walk-forward backtester for the weekly Donchian framework          |
 | `walkforward_rotation.py` | Walk-forward backtester for the sector rotation framework       |
-| `start_bot.command`    | Launcher for the Login Item autostart                              |
-| `setup_autostart.sh`   | Installs the Login Item                                            |
-| `setup_market_wake.sh` | Schedules Mac to wake at 9:15 AM ET weekdays                       |
+| `forward_test.py`      | One-command scoreboard: account vs SPY alpha since the 2026-06-11 forward-test baseline |
+| `start_bot.command`    | Launcher for the Login Item autostart (repo root)                  |
+| `setup_autostart.sh`   | Installs the Login Item (repo root)                                |
+| `setup_market_wake.sh` | Schedules Mac to wake before market open weekdays (repo root)      |
+| `setup_health_alert.sh` | Notify-only watchdog: macOS alert if heartbeat goes stale (repo root) |
+| `setup_auto_restart.sh` | Auto-restart watchdog: kills + relaunches a hung bot (repo root)  |
 
 Logs land in `./logs/`:
 - `agent.jsonl` — every model message and tool call
