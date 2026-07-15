@@ -1,9 +1,10 @@
 # Autonomous LLM Swing Trading Agent
 
-A research project: an autonomous LLM-driven trading bot that runs locally,
-trades paper-only through the Alpaca API, and was used as a sandbox for
-rigorous walk-forward backtesting of multiple swing-trading strategy
-frameworks.
+A research project: an autonomous LLM-driven trading bot that runs 24/7 on
+a $4/month VPS (originally on my laptop — the reliability section explains
+why it moved), trades paper-only through the Alpaca API, and was used as a
+sandbox for rigorous walk-forward backtesting of multiple swing-trading
+strategy frameworks.
 
 **The bottom-line finding:** across three structurally different strategy
 frameworks tested with proper train/holdout walk-forward validation, none
@@ -24,6 +25,12 @@ decision rule written down in advance so the result can't be
 rationalized after the fact. See `HANDOFF.md` at the repo root for the
 operating rules while the test runs.
 
+Two mid-test operational notes, recorded for honesty: on 2026-07-08,
+position sizing was raised (~20% → ~60% target deployment) and a
+per-symbol cap bug was fixed, so alpha comparisons spanning that date mix
+two sizing regimes; and on 2026-07-15 the bot moved from my MacBook to an
+always-on VPS, which ended the laptop-sleep coverage gaps described below.
+
 ---
 
 ## TL;DR for someone scanning this in 60 seconds
@@ -38,8 +45,9 @@ operating rules while the test runs.
   the Mac, or the LLM provider goes down
 - A Streamlit dashboard with live positions, P&L, an SPY benchmark chart,
   and a bot-health indicator
-- Auto-start at login + scheduled Mac wake before market open + heartbeat
-  file for staleness detection — runs hands-free
+- Runs 24/7 hands-free as a `systemd` service on a $4/month VPS, after the
+  laptop-hosting era ended in a diagnosed macOS power-management failure
+  mode (full story in the reliability section)
 - Pluggable backend: local Ollama (`qwen3:4b`) or Gemini cloud API, swap via
   one `.env` line
 
@@ -122,12 +130,12 @@ not just in the prompt.
 
 ---
 
-## Keeping an unattended bot alive on a laptop (harder than the trading)
+## Keeping an unattended bot alive (harder than the trading)
 
 The most instructive engineering in this project wasn't the strategy — it
-was making a long-running process survive real-world conditions on a
-consumer MacBook. Each layer below exists because something actually failed
-without it:
+was making a long-running process survive real-world conditions, first on a
+consumer MacBook and eventually on a VPS. Each layer below exists because
+something actually failed without it:
 
 1. **Broker-side exits, always.** Every position's stop lives at Alpaca,
    not in the bot. A dead bot, a sleeping Mac, or a crashed LLM provider
@@ -150,17 +158,39 @@ without it:
 
 4. **The watchdog gap you only find in production.** After the SIGALRM fix,
    the bot still hung twice — both times pre-market. Root cause: the
-   market-open check runs *before* the alarm is armed, so a dead-connection
-   hang in that one call was unprotected. Interim mitigation (to avoid
-   changing bot code mid-forward-test): an external launchd watchdog
-   (`setup_auto_restart.sh`) that kills and relaunches the bot if the
-   heartbeat goes >90 min stale during market hours.
+   market-open check ran *before* the alarm was armed, so a dead-connection
+   hang in that one call was unprotected. Interim mitigation: an external
+   launchd watchdog (`setup_auto_restart.sh`) that killed and relaunched
+   the bot if the heartbeat went >90 min stale during market hours. The
+   one-line root-cause fix (arm the alarm around the market-open check too)
+   landed with the VPS migration, where it matters more — `systemd`
+   restarts crashes, not hangs.
 
-5. **Auto-start + auto-wake.** Login Item relaunches the bot at login;
-   `pmset` schedules the Mac to wake before market open on weekdays.
-   Limitation accepted: a closed-lid laptop is still a coverage gap. Only
-   an always-on host removes it — deferred until the forward test says the
-   strategy is worth hosting.
+5. **The failure mode that ended laptop hosting.** A Login Item relaunched
+   the bot at login and `pmset` scheduled the Mac to wake before market
+   open on weekdays. It worked — as long as the laptop was plugged in.
+   The `pmset -g log` diagnosis for the recurring "hangs": on battery,
+   macOS downgrades scheduled wakes to 45-second **DarkWakes** — background
+   maintenance blips that never reach full wake. An unplugged, closed
+   MacBook gave the bot a few seconds of CPU per hour: enough to stamp a
+   heartbeat and look alive, not enough to trade. The process wasn't hung;
+   the computer was asleep, and no `caffeinate` flag can override
+   lid-closed-on-battery sleep — that's OS policy, not a bug. The external
+   watchdog dutifully "fixed" it after every lid-open, which is how a real
+   suspend-failure masqueraded as a recurring software hang. After the
+   fourth missed market open in two weeks, the answer was architectural,
+   not another watchdog.
+
+6. **The actual fix: stop hosting a 24/7 process on a machine that sleeps.**
+   The bot now runs on a $4/month DigitalOcean droplet as a `systemd`
+   service — boot-time start plus `Restart=always` replaced the entire
+   launchd watchdog stack (three shell scripts and two launch agents became
+   a 15-line unit file). Verified the honest way: reboot the server, watch
+   the bot come back and run a cycle unassisted. One wrinkle worth
+   recording: campus WiFi silently blocks outbound port 22, so the first
+   deploy bootstrapped through the provider's browser console to put SSH on
+   port 443 — the HTTPS port no network blocks. `deploy/deploy.sh`
+   re-deploys any code change in one command.
 
 **A bug worth confessing:** for the project's first weeks, `broker.get_bars`
 passed `limit` to Alpaca, which truncates from the *oldest* end of the
@@ -217,14 +247,27 @@ streamlit run dashboard.py   # dashboard at http://localhost:8501
 
 ### 5. Run autonomously (optional)
 
+**VPS (how it actually runs now)** — any $4–6/month Ubuntu 24.04 box:
+
+```bash
+./deploy/deploy.sh <server-ip>   # from repo root: syncs code + .env,
+                                 # builds venv, installs systemd service
+```
+
+The service starts on boot and auto-restarts on crash. Check on it with
+`journalctl -u trading-bot -n 50`.
+
+**Laptop (the original way, kept for reference)**:
+
 ```bash
 ./setup_autostart.sh        # adds bot to Login Items, opens it now
 ./setup_market_wake.sh      # schedules Mac to wake at 9:15 AM ET weekdays
 ```
 
-Bot will auto-start at login in a Terminal window. Mac will auto-wake before
-market open. A heartbeat file at `logs/heartbeat.txt` is touched every loop
-iteration so you can verify it hasn't silently hung.
+Caveat that eventually ended this era: scheduled wakes only fully wake a
+MacBook on AC power (see reliability section #5). A heartbeat file at
+`logs/heartbeat.txt` is touched every loop iteration so you can verify the
+bot isn't silently hung — or silently suspended.
 
 ---
 
@@ -249,11 +292,13 @@ iteration so you can verify it hasn't silently hung.
 | `walkforward_weekly.py`| Walk-forward backtester for the weekly Donchian framework          |
 | `walkforward_rotation.py` | Walk-forward backtester for the sector rotation framework       |
 | `forward_test.py`      | One-command scoreboard: account vs SPY alpha since the 2026-06-11 forward-test baseline |
-| `start_bot.command`    | Launcher for the Login Item autostart (repo root)                  |
-| `setup_autostart.sh`   | Installs the Login Item (repo root)                                |
-| `setup_market_wake.sh` | Schedules Mac to wake before market open weekdays (repo root)      |
-| `setup_health_alert.sh` | Notify-only watchdog: macOS alert if heartbeat goes stale (repo root) |
-| `setup_auto_restart.sh` | Auto-restart watchdog: kills + relaunches a hung bot (repo root)  |
+| `deploy/deploy.sh`     | One-command VPS deploy: server setup, code sync, venv, systemd unit (repo root) |
+| `deploy/trading-bot.service` | systemd unit — start on boot, auto-restart on crash (repo root) |
+| `start_bot.command`    | Launcher for the Login Item autostart (repo root, Mac era)         |
+| `setup_autostart.sh`   | Installs the Login Item (repo root, Mac era)                       |
+| `setup_market_wake.sh` | Schedules Mac to wake before market open weekdays (repo root, Mac era) |
+| `setup_health_alert.sh` | Notify-only watchdog: macOS alert if heartbeat goes stale (repo root, Mac era) |
+| `setup_auto_restart.sh` | Auto-restart watchdog: kills + relaunches a hung bot (repo root, Mac era) |
 
 Logs land in `./logs/`:
 - `agent.jsonl` — every model message and tool call
