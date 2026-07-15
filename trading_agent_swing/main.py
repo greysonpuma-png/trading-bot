@@ -124,7 +124,15 @@ def cmd_loop(interval: int):
         try:
             _write_heartbeat()
             _rotate_agent_log()
-            if broker.is_market_open():
+            # The market-open check must sit INSIDE an alarm window too: a
+            # dead-connection hang in this one call froze the loop on Jun 30
+            # and Jul 2 because only run_once() was guarded.
+            signal.alarm(CYCLE_TIMEOUT_SECONDS)
+            try:
+                market_open = broker.is_market_open()
+            finally:
+                signal.alarm(0)
+            if market_open:
                 print(f"\n[{datetime.now().isoformat()}] cycle...")
                 signal.alarm(CYCLE_TIMEOUT_SECONDS)   # arm the watchdog
                 try:
