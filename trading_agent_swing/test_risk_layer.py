@@ -136,6 +136,17 @@ def test_rejects_position_over_dollar_cap(tmp_path):
     assert "max_position_size_usd" in result.reason
 
 
+def test_dollar_cap_counts_existing_position_in_same_symbol(tmp_path):
+    # Regression: repeat picks of one symbol used to stack past the cap because
+    # only the new ORDER was checked, not the total position (JNJ hit ~4.7x cap).
+    near_cap = [{"symbol": "SPY", "qty": 1.0,
+                 "market_value": CONFIG.max_position_size_usd - 100.0}]
+    risk = make_risk(tmp_path, FakeBroker(ask=100.0, positions=near_cap))
+    result = risk.check_order("SPY", 5, "buy", GOOD_STOP, GOOD_TARGET)  # $500 > $100 headroom
+    assert not result.approved
+    assert "existing" in result.reason
+
+
 def test_rejects_when_quote_unavailable(tmp_path):
     risk = make_risk(tmp_path, FakeBroker(quote_error=True))
     result = risk.check_order("SPY", 5, "buy", GOOD_STOP, GOOD_TARGET)

@@ -154,7 +154,7 @@ def get_market_regime() -> dict:
 
 
 @_cycle_cached
-def get_volatility(symbol: str, risk_budget_usd: float = 150.0) -> dict:
+def get_volatility(symbol: str, risk_budget_usd: float = 400.0) -> dict:
     """Measure a symbol's volatility (14-day ATR) and suggest a volatility-aware
     stop price, take-profit price, and share count so that EACH trade risks
     roughly the same dollar amount regardless of how jumpy the stock is.
@@ -179,6 +179,17 @@ def get_volatility(symbol: str, risk_budget_usd: float = 150.0) -> dict:
     suggested_stop   = round(price - stop_distance, 2)
     suggested_target = round(price + 2 * stop_distance, 2)   # 2:1 reward:risk
     suggested_qty    = int(risk_budget_usd / stop_distance) if stop_distance > 0 else 0
+
+    # Clamp so the suggestion actually clears the risk layer's per-symbol cap:
+    # headroom = cap minus whatever we already hold in this symbol.
+    try:
+        held = {p["symbol"]: p for p in _broker.get_positions()}.get(symbol)
+        held_value = float(held["market_value"]) if held else 0.0
+    except Exception:
+        held_value = 0.0
+    headroom = max(CONFIG.max_position_size_usd - held_value, 0.0)
+    suggested_qty = min(suggested_qty, int(headroom / price) if price > 0 else 0,
+                        CONFIG.max_order_qty)
 
     return {
         "symbol": symbol,
@@ -272,8 +283,15 @@ def propose_trade(symbol: str, side: str, qty: int, reason: str,
 
 def select_candidate(symbol: str, rationale: str) -> dict:
     """SCOUT stage: lock in the single best candidate for this cycle. Records the
-    pick; the Risk Manager stage then specs and submits the actual trade."""
+    pick; the Risk Manager stage then specs and submits the actual trade.
+    Idempotent per cycle: the model sometimes repeats the call despite the
+    choose-at-most-one instruction, so a same-symbol repeat is not re-logged."""
     symbol = symbol.upper()
+    if _cycle_cache.get("_selected_pick") == symbol:
+        return {"recorded": True, "symbol": symbol,
+                "message": f"{symbol} was already locked in this cycle. Do not call "
+                           "select_candidate again; you are done."}
+    _cycle_cache["_selected_pick"] = symbol
     entry = {"timestamp": datetime.now().isoformat(), "symbol": symbol, "rationale": rationale}
     with open(os.path.join(CONFIG.log_dir, "picks.jsonl"), "a") as f:
         f.write(json.dumps(entry) + "\n")
@@ -282,7 +300,13 @@ def select_candidate(symbol: str, rationale: str) -> dict:
 
 
 def write_journal(note: str) -> dict:
-    """POSITION MANAGER stage: append a short review note to the trade journal."""
+    """POSITION MANAGER stage: append a short review note to the trade journal.
+    Idempotent per cycle — only the first journal entry of a cycle is kept."""
+    if _cycle_cache.get("_journal_written"):
+        return {"recorded": True,
+                "message": "journal entry already saved this cycle. Do not call "
+                           "write_journal again; you are done."}
+    _cycle_cache["_journal_written"] = True
     entry = {"timestamp": datetime.now().isoformat(), "note": note}
     with open(os.path.join(CONFIG.log_dir, "journal.jsonl"), "a") as f:
         f.write(json.dumps(entry) + "\n")

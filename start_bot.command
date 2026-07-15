@@ -24,4 +24,7 @@ cd "$HOME/Documents/trading-bot/trading_agent_swing" || {
 }
 
 source .venv/bin/activate
-exec caffeinate -i python main.py loop
+# -i: no idle sleep; -s: no system sleep while on AC power.
+# Neither can stop lid-closed/battery sleep — keep the Mac PLUGGED IN with the
+# lid OPEN on trading days, or the whole bot freezes with the machine.
+exec caffeinate -is python main.py loop

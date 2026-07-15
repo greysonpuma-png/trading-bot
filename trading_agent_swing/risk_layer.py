@@ -53,21 +53,27 @@ class RiskLayer:
                 f"daily loss ${today_pnl:.2f} hit limit of ${CONFIG.max_daily_loss_usd}. trading halted for the day."
             )
 
-        # 5. Position dollar-size cap (use ask as conservative estimate)
+        # 5. Position dollar-size cap, PER SYMBOL: what we already hold in this
+        #    symbol plus the new order must stay under the cap. Without counting
+        #    the existing holding, repeat picks of the same symbol stack past the
+        #    cap one order at a time (JNJ reached ~4.7x the cap this way).
         try:
             quote = self.broker.get_quote(symbol)
             est_value = quote["ask"] * qty
         except Exception as e:
             return RiskCheckResult(False, f"could not fetch quote: {e}")
 
-        if side == "buy" and est_value > CONFIG.max_position_size_usd:
-            return RiskCheckResult(
-                False,
-                f"order value ${est_value:.2f} exceeds max_position_size_usd ${CONFIG.max_position_size_usd}"
-            )
-
         positions = self.broker.get_positions()
         existing = {p["symbol"]: p for p in positions}
+
+        if side == "buy":
+            held_value = float(existing.get(symbol, {}).get("market_value", 0.0))
+            if est_value + held_value > CONFIG.max_position_size_usd:
+                return RiskCheckResult(
+                    False,
+                    f"order ${est_value:.2f} + existing {symbol} position ${held_value:.2f} "
+                    f"exceeds max_position_size_usd ${CONFIG.max_position_size_usd}"
+                )
 
         # 6. Max concurrent positions
         if side == "buy" and symbol not in existing and len(positions) >= CONFIG.max_open_positions:

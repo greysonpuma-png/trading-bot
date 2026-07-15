@@ -29,10 +29,13 @@ class Config:
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     # === HARD RISK LIMITS — tuned for SWING trading ===
-    max_position_size_usd: float = 2500.0   # larger per-position since fewer positions and longer holds
-    max_daily_loss_usd: float = 500.0       # wider room for normal multi-day volatility
-    max_open_positions: int = 8             # more diversification across swing setups
-    max_order_qty: int = 100                # same cap on raw share count
+    # Resized 2026-07-08: target ~60% of the $100k paper account deployed
+    # (8 x $7,500 = $60k), unlevered — margin buying power is deliberately unused.
+    # Cap is enforced PER SYMBOL (existing holding + new order), not per order.
+    max_position_size_usd: float = 7500.0   # ~7.5% of equity per symbol
+    max_daily_loss_usd: float = 1000.0      # ~1% of equity; halts new buys for the day
+    max_open_positions: int = 8             # diversification across swing setups
+    max_order_qty: int = 200                # raw share sanity cap (cheapest whitelist names ~$50)
     max_positions_per_sector: int = 3       # cap concentration: max open positions in one sector
     market_hours_only: bool = True
 

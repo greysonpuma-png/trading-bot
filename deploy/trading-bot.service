@@ -1,0 +1,19 @@
+# systemd unit for the swing trading bot (paper account).
+# Replaces the Mac's caffeinate/launchd/watchdog plumbing: starts on boot,
+# auto-restarts on crash. The in-process SIGALRM cycle timeout still guards hangs.
+[Unit]
+Description=Swing trading bot (Alpaca paper)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bot
+WorkingDirectory=/home/bot/trading_agent_swing
+ExecStart=/home/bot/trading_agent_swing/.venv/bin/python main.py loop
+Restart=always
+RestartSec=60
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
