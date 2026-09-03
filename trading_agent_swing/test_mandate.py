@@ -114,10 +114,16 @@ def test_cadence_never_blocks_sells(tmp_path, meanrev_mode):
 
 
 def test_cadence_ignored_in_pullback_mode(tmp_path):
+    """In pullback mode the daily-entry cap must not apply — regardless of what
+    STRATEGY_MODE the ambient .env sets, so force it for this test."""
     from datetime import datetime
-    assert CONFIG.strategy_mode != "meanrev"  # default mode on this machine
-    risk = _risk_with_proposals(tmp_path, FakeBroker(),
-                                [_executed_buy(datetime.now().isoformat())])
-    res = risk.check_order("SPY", 1, "buy",
-                           stop_price=94.0, take_profit_price=112.0)
-    assert res.approved, res.reason
+    prev = CONFIG.strategy_mode
+    CONFIG.strategy_mode = "pullback"
+    try:
+        risk = _risk_with_proposals(tmp_path, FakeBroker(),
+                                    [_executed_buy(datetime.now().isoformat())])
+        res = risk.check_order("SPY", 1, "buy",
+                               stop_price=94.0, take_profit_price=112.0)
+        assert res.approved, res.reason
+    finally:
+        CONFIG.strategy_mode = prev

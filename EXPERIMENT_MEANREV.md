@@ -1,7 +1,8 @@
 # Exp5 — Mean-Reversion Mandate (competency test)
 
-_Pre-registered 2026-09-01. Window: 2026-09-02 → 2026-09-29 (4 weeks). Read the
-scorecard with `python competency_report.py`._
+_Pre-registered 2026-09-01, deployed to the droplet 2026-09-03 after the close.
+Window: 2026-09-04 → 2026-10-01 (4 weeks). Read the scorecard with
+`python competency_report.py`._
 
 ## What this is — and what it is not
 

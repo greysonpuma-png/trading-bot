@@ -17,8 +17,8 @@ from datetime import date, datetime
 
 from config import CONFIG
 
-EXP5_START = "2026-09-02"   # first trading day under the mean-reversion mandate
-EXP5_READ  = "2026-09-29"   # pre-registered 4-week read
+EXP5_START = "2026-09-04"   # first trading day under the mean-reversion mandate
+EXP5_READ  = "2026-10-01"   # pre-registered 4-week read
 
 
 def _load_jsonl(path):
