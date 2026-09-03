@@ -205,6 +205,45 @@ def get_volatility(symbol: str, risk_budget_usd: float = 400.0) -> dict:
     }
 
 
+def reversion_exit_signal(rsi, gain_pct):
+    """Exp5 mean-reversion exit predicate — the 'sell high' rule, kept pure so
+    it can be unit-tested and audited by competency_report.py.
+    Returns (exit_signal, why)."""
+    if rsi is not None and rsi >= CONFIG.meanrev_rsi_exit:
+        return True, f"RSI {rsi} >= {CONFIG.meanrev_rsi_exit} (reversion complete)"
+    if gain_pct is not None and gain_pct >= CONFIG.meanrev_gain_exit_pct:
+        return True, f"unrealized gain {gain_pct:+.1f}% >= +{CONFIG.meanrev_gain_exit_pct}%"
+    return False, "still low: reversion target not reached"
+
+
+def get_reversion_status(symbol: str) -> dict:
+    """MEAN-REVERSION mandate: objective exit check for one held position.
+    Computes RSI(14) and unrealized gain in Python and applies the written
+    exit rule. The Position Manager must SELL when exit_signal is true and
+    HOLD when it is false — this tool's output is the mandate, not a hint."""
+    from screener import _rsi
+    symbol = symbol.upper()
+    pos = {p["symbol"]: p for p in _broker.get_positions()}.get(symbol)
+    if not pos:
+        return {"symbol": symbol, "held": False,
+                "note": "no open position in this symbol — nothing to exit"}
+    bars = _broker.get_bars(symbol, "1Day", limit=30)
+    closes = [b["close"] for b in bars]
+    rsi = _rsi(closes) if len(closes) >= 15 else None
+    gain_pct = round(float(pos["unrealized_plpc"]) * 100.0, 2)
+    signal, why = reversion_exit_signal(rsi, gain_pct)
+    return {
+        "symbol": symbol,
+        "held": True,
+        "rsi_14d": rsi,
+        "unrealized_gain_pct": gain_pct,
+        "exit_signal": signal,
+        "mandate": (f"SELL now ({why})" if signal else
+                    f"HOLD ({why}; exit at RSI >= {CONFIG.meanrev_rsi_exit} "
+                    f"or gain >= +{CONFIG.meanrev_gain_exit_pct}%)"),
+    }
+
+
 # ===== the only write tool =====
 
 def propose_trade(symbol: str, side: str, qty: int, reason: str,
@@ -434,6 +473,24 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "get_reversion_status",
+            "description": (
+                "MEAN-REVERSION mandate only. For ONE held position, returns RSI(14), "
+                "unrealized gain %, and exit_signal — the objective, Python-computed "
+                "verdict of the written exit rule (sell when RSI or gain target is hit). "
+                "Call this for EVERY open position, every cycle. exit_signal=true means "
+                "you MUST propose the sell this cycle; false means you MUST hold."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"symbol": {"type": "string"}},
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "propose_trade",
             "description": (
                 "Propose a trade. Passes through risk checks. "
@@ -508,6 +565,7 @@ TOOL_FUNCTIONS = {
     "get_recent_proposals": get_recent_proposals,
     "get_market_regime":    get_market_regime,
     "get_volatility":       get_volatility,
+    "get_reversion_status": get_reversion_status,
     "propose_trade":        propose_trade,
     "select_candidate":     select_candidate,
     "write_journal":        write_journal,

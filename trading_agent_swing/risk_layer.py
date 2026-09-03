@@ -24,6 +24,7 @@ class RiskLayer:
         self.broker = broker
         os.makedirs(CONFIG.log_dir, exist_ok=True)
         self.daily_pnl_file = os.path.join(CONFIG.log_dir, "daily_pnl.json")
+        self.proposals_file = os.path.join(CONFIG.log_dir, "proposals.jsonl")
 
     def check_order(self, symbol: str, qty: int, side: str,
                     stop_price: float = None, take_profit_price: float = None) -> RiskCheckResult:
@@ -39,6 +40,19 @@ class RiskLayer:
             return RiskCheckResult(False, "qty must be positive")
         if qty > CONFIG.max_order_qty:
             return RiskCheckResult(False, f"qty {qty} exceeds max_order_qty {CONFIG.max_order_qty}")
+
+        # 2b. Entry cadence — mean-reversion mandate only (Exp5): at most
+        #     meanrev_max_entries_per_day EXECUTED buys per calendar day. The
+        #     Scout is instructed to pass once the day's entry is made; this
+        #     check is the hard backstop the prompt cannot talk its way past.
+        if side == "buy" and CONFIG.strategy_mode == "meanrev":
+            n = self._entries_executed_today()
+            if n >= CONFIG.meanrev_max_entries_per_day:
+                return RiskCheckResult(
+                    False,
+                    f"mean-reversion mandate allows {CONFIG.meanrev_max_entries_per_day} "
+                    f"new entry per day; {n} already executed today. No more buys until tomorrow."
+                )
 
         # 3. Market open
         if CONFIG.market_hours_only and not self.broker.is_market_open():
@@ -159,6 +173,27 @@ class RiskLayer:
                 )
 
         return RiskCheckResult(True, "approved")
+
+    def _entries_executed_today(self) -> int:
+        """Count buy orders actually EXECUTED today, from the proposals log.
+        Execution updates are the {"update": {...}} records tools.py appends
+        after a successful submit — proposals that were rejected or failed to
+        execute don't count against the cadence cap."""
+        if not os.path.exists(self.proposals_file):
+            return 0
+        today = date.today().isoformat()
+        n = 0
+        with open(self.proposals_file) as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                upd = entry.get("update")
+                if (upd and upd.get("side") == "buy" and upd.get("executed")
+                        and str(upd.get("timestamp", "")).startswith(today)):
+                    n += 1
+        return n
 
     def _compute_daily_pnl(self, current_equity: float) -> float:
         """Snapshot equity at first call each day, then return current - snapshot."""

@@ -52,6 +52,24 @@ class Config:
     exit_style: str = os.getenv("EXIT_STYLE", "bracket").strip().lower()
     trail_percent: float = float(os.getenv("TRAIL_PERCENT", "10"))
 
+    # Strategy mode (Exp5, 2026-09-01):
+    #   "pullback" — original: buy pullbacks to a rising 20-day MA in an uptrend
+    #   "meanrev"  — Exp5 competency mandate: buy low (oversold in a long-term
+    #                uptrend), sell high (reversion), 3-5 entries/week, max 1/day.
+    # Exp5 is NOT a profitability experiment — the alpha question was answered
+    # (~0% at the Sept 3 read). It measures MANDATE FIDELITY: does the LLM
+    # pipeline execute a written rulebook faithfully? Scored by
+    # competency_report.py, not by P&L. See EXPERIMENT_MEANREV.md.
+    strategy_mode: str = os.getenv("STRATEGY_MODE", "pullback").strip().lower()
+
+    # Mean-reversion mandate parameters (fixed for the experiment window —
+    # changing them mid-window invalidates the competency scorecard):
+    meanrev_rsi_entry: float = 35.0      # entry: RSI(14) at or below this...
+    meanrev_dip_entry_pct: float = -4.0  # ...OR price at least this % below 20-day MA
+    meanrev_rsi_exit: float = 60.0       # exit: RSI(14) at or above this...
+    meanrev_gain_exit_pct: float = 6.0   # ...OR unrealized gain at least this %
+    meanrev_max_entries_per_day: int = 1 # hard cadence cap (risk layer enforced)
+
     # === Symbol whitelist — broader universe for swing trading ===
     # ETFs for sector/index exposure + large/mid caps with good liquidity and clear narratives
     allowed_symbols: List[str] = field(default_factory=lambda: [

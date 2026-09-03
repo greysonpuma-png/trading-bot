@@ -34,6 +34,8 @@ RISK_TOOLS    = ["get_account", "get_positions", "get_quote",
                  "get_bars", "get_volatility", "propose_trade"]
 MANAGER_TOOLS = ["get_positions", "get_quote", "get_bars", "get_news",
                  "propose_trade", "write_journal"]
+if CONFIG.strategy_mode == "meanrev":
+    MANAGER_TOOLS = MANAGER_TOOLS + ["get_reversion_status"]
 
 
 SCOUT_PROMPT = """You are the SCOUT — stage 1 of a 3-stage swing trading system.
@@ -101,6 +103,63 @@ submit it.
 RISK_PROMPT = (_RISK_PROMPT_TRAILING.format(trail=CONFIG.trail_percent)
                if CONFIG.exit_style == "trailing" else _RISK_PROMPT_BRACKET)
 
+SCOUT_PROMPT_MEANREV = """You are the SCOUT — stage 1 of a 3-stage trading system
+operating under a written MEAN-REVERSION MANDATE (Exp5): buy low, sell high.
+
+Your ONLY job: from a pre-screened list of oversold candidates, identify the single
+best mean-reversion entry — or decide none qualifies. You do NOT place trades.
+
+THE MANDATE'S ENTRY RULE (the candidates already passed it in Python):
+  - stock is above its 200-day moving average (long-term uptrend intact)
+  - AND it is oversold: RSI(14) <= {rsi_entry} OR price {dip_entry}% or more below its 20-day MA
+CADENCE RULE: 3-5 entries per week, at MOST 1 per day. Your user message states how
+many entries were already executed today — if it is 1 or more, you MUST make no pick
+(reply "NO PICK — daily entry already made") no matter how good a setup looks.
+
+For the most promising candidates:
+- get_bars(symbol, "1Day", 30) — confirm the dip is orderly, not a collapse on news.
+- get_news(symbol) — check WHY it's down. A routine pullback is buyable; fraud,
+  guidance cuts, or structural bad news is not "low", it's "broken" — skip those.
+- get_market_regime() — in a bearish regime, favor passing.
+
+Then decide:
+- If ONE candidate is a clean oversold-in-uptrend entry AND no entry was made today,
+  call select_candidate(symbol, rationale). The rationale must cite the specific
+  oversold reading (RSI value or % below 20-day MA) and the news check.
+- Otherwise reply "NO PICK THIS CYCLE" and briefly say why.
+
+Choose AT MOST ONE. The mandate values discipline over activity: a correct "no pick"
+is a passing grade; an off-mandate pick is a failing one.
+""".format(rsi_entry=CONFIG.meanrev_rsi_entry, dip_entry=CONFIG.meanrev_dip_entry_pct)
+
+MANAGER_PROMPT_MEANREV = """You are the POSITION MANAGER — stage 3 of a 3-stage trading
+system operating under a written MEAN-REVERSION MANDATE (Exp5): buy low, sell high.
+
+Your job: apply the mandate's EXIT RULE to every open position, mechanically, then journal.
+
+1. get_positions — list what is held. If nothing is held, journal briefly and finish.
+2. For EACH open position, call get_reversion_status(symbol). It computes the exit
+   rule in Python and returns exit_signal:
+   - exit_signal = true  → you MUST propose_trade(symbol, side="sell", qty=<full
+     position>, reason=<quote the tool's mandate line>) THIS cycle. "Sell high" only
+     works if you actually sell when the rule says so. Do not hold for "a little more."
+   - exit_signal = false → you MUST hold. Do not improvise an exit because the price
+     wobbled or the news feels bad — a broker-side trailing stop already protects the
+     downside. Selling early is as much a mandate violation as failing to sell.
+3. Finally, write_journal: 1-3 sentences — which positions got exit signals, what you
+   did, and the state of the book.
+
+You are being graded on FIDELITY to this rulebook, not on P&L. The correct action is
+always the one the rule prescribes.
+"""
+
+if CONFIG.strategy_mode == "meanrev":
+    SCOUT_PROMPT_ACTIVE   = SCOUT_PROMPT_MEANREV
+    MANAGER_PROMPT_ACTIVE = MANAGER_PROMPT_MEANREV
+else:
+    SCOUT_PROMPT_ACTIVE   = SCOUT_PROMPT
+    MANAGER_PROMPT_ACTIVE = None   # bound after MANAGER_PROMPT is defined below
+
 MANAGER_PROMPT = """You are the POSITION MANAGER — stage 3 of a 3-stage swing trading system.
 
 Your job: review every open position, decide hold or close, then journal.
@@ -120,6 +179,9 @@ Your job: review every open position, decide hold or close, then journal.
 
 If every position is healthy, holding them all is the correct, expected outcome.
 """
+
+if MANAGER_PROMPT_ACTIVE is None:
+    MANAGER_PROMPT_ACTIVE = MANAGER_PROMPT
 
 
 class TradingAgent:
@@ -196,26 +258,48 @@ class TradingAgent:
                    "candidates": candidates})
 
         # Stage 3 — POSITION MANAGER: manage what we already hold.
-        pm_user = ("Review every open position now. For each, decide hold or close, "
-                   "then write a short journal entry on how the portfolio is doing.")
-        pm_text, _ = self._run_stage("PositionManager", MANAGER_PROMPT, pm_user, MANAGER_TOOLS)
+        if CONFIG.strategy_mode == "meanrev":
+            pm_user = ("Apply the mean-reversion exit rule to every open position now: "
+                       "get_reversion_status for each, sell exactly those with "
+                       "exit_signal=true, hold the rest, then journal.")
+        else:
+            pm_user = ("Review every open position now. For each, decide hold or close, "
+                       "then write a short journal entry on how the portfolio is doing.")
+        pm_text, _ = self._run_stage("PositionManager", MANAGER_PROMPT_ACTIVE, pm_user, MANAGER_TOOLS)
         parts.append("--- POSITION MANAGER ---\n" + pm_text)
 
         # Stage 1 — SCOUT: find one new setup from the screened candidates.
+        meanrev = CONFIG.strategy_mode == "meanrev"
+        cadence_note = ""
+        if meanrev:
+            from tools import _risk
+            entries_today = _risk._entries_executed_today()
+            self._log({"event": "cadence", "entries_executed_today": entries_today})
+            cadence_note = (f"\n\nCADENCE STATUS: {entries_today} entry(ies) already executed "
+                            f"today (mandate max: {CONFIG.meanrev_max_entries_per_day}/day)."
+                            + (" You MUST make no pick this cycle." if entries_today
+                               >= CONFIG.meanrev_max_entries_per_day else " An entry is available today."))
         if candidates:
             lines = "\n".join(
                 f"  - {c['symbol']} ({c['sector']}): ${c['price']}, "
                 f"{c['pct_above_ma20']:+.2f}% vs 20-day MA, RSI {c.get('rsi', 'n/a')}, "
                 f"MACD {'bullish' if c.get('macd_bullish') else 'bearish/flat'}"
+                + (f" — {c['setup']}" if meanrev else "")
                 for c in candidates
             )
-            scout_user = ("Today's pre-screened candidates (already in an uptrend and pulled "
-                          "back to a rising 20-day moving average):\n" + lines +
-                          "\n\nAnalyze them and select the single best long setup, or make no pick.")
+            intro = ("Today's pre-screened candidates (each already OVERSOLD in a long-term "
+                     "uptrend — they passed the mandate's Python entry screen):"
+                     if meanrev else
+                     "Today's pre-screened candidates (already in an uptrend and pulled "
+                     "back to a rising 20-day moving average):")
+            scout_user = (intro + "\n" + lines +
+                          "\n\nAnalyze them and select the single best long setup, or make no pick."
+                          + cadence_note)
         else:
             scout_user = ("The Python screener found no qualifying candidates today. There is "
-                          "very likely no pick this cycle — confirm briefly and do not force one.")
-        scout_text, scout_cap = self._run_stage("Scout", SCOUT_PROMPT, scout_user, SCOUT_TOOLS)
+                          "very likely no pick this cycle — confirm briefly and do not force one."
+                          + cadence_note)
+        scout_text, scout_cap = self._run_stage("Scout", SCOUT_PROMPT_ACTIVE, scout_user, SCOUT_TOOLS)
         parts.append("--- SCOUT ---\n" + scout_text)
 
         # Stage 2 — RISK MANAGER: only runs if the Scout actually picked something.

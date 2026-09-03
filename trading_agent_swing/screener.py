@@ -18,10 +18,12 @@ from broker import Broker
 # ── screen parameters ──
 MA_FAST          = 20      # pullback-reference moving average
 MA_SLOW          = 50      # trend filter
+MA_LONG          = 200     # long-term trend filter (mean-reversion mode)
 RISING_LOOKBACK  = 5       # the fast MA must be higher than it was this many days ago
 PULLBACK_LOW     = -1.0    # price may dip slightly below the fast MA (% terms)
 PULLBACK_HIGH    = 4.0     # ...up to this far above it — beyond that it's a chase
 BARS_NEEDED      = MA_SLOW + 5
+BARS_NEEDED_MEANREV = MA_LONG + 5
 
 
 def _sma(values, n):
@@ -80,33 +82,85 @@ def _macd(closes):
     return round(macd_v, 3), round(sig_v, 3), bool(macd_v > sig_v)
 
 
+def meanrev_entry_setup(price, ma_long, rsi, pct_above_fast):
+    """Exp5 mean-reversion entry predicate — the 'buy low' rule, kept pure so
+    it can be unit-tested and audited by competency_report.py.
+
+    A valid entry is OVERSOLD IN A LONG-TERM UPTREND:
+      - price above the 200-day MA (we buy dips in healthy stocks, not knives)
+      - AND (RSI(14) <= entry threshold  OR  price sufficiently below 20-day MA)
+    Returns (is_setup, why)."""
+    if ma_long is None or price <= ma_long:
+        return False, "not above 200-day MA"
+    oversold_rsi = rsi is not None and rsi <= CONFIG.meanrev_rsi_entry
+    oversold_dip = pct_above_fast <= CONFIG.meanrev_dip_entry_pct
+    if oversold_rsi and oversold_dip:
+        return True, f"RSI {rsi} <= {CONFIG.meanrev_rsi_entry} and {pct_above_fast:+.1f}% vs 20MA"
+    if oversold_rsi:
+        return True, f"RSI {rsi} <= {CONFIG.meanrev_rsi_entry}"
+    if oversold_dip:
+        return True, f"{pct_above_fast:+.1f}% vs 20MA (<= {CONFIG.meanrev_dip_entry_pct}%)"
+    return False, "not oversold"
+
+
 def scan_market(broker=None, top_n=5):
     """Screen every allowed symbol. Returns a ranked list of candidate dicts,
     best setup first. Never raises for a single bad symbol — it just skips it.
+    Branches on CONFIG.strategy_mode: "pullback" (original) or "meanrev" (Exp5).
     """
     if broker is None:
         broker = Broker()
 
+    meanrev = CONFIG.strategy_mode == "meanrev"
+    bars_needed = BARS_NEEDED_MEANREV if meanrev else BARS_NEEDED
+
     candidates = []
     for sym in CONFIG.allowed_symbols:
         try:
-            bars = broker.get_bars(sym, "1Day", limit=BARS_NEEDED + 10)
+            bars = broker.get_bars(sym, "1Day", limit=bars_needed + 10)
         except Exception:
             continue
         closes = [b["close"] for b in bars]
-        if len(closes) < BARS_NEEDED:
+        if len(closes) < bars_needed:
             continue
 
         price      = closes[-1]
         ma_fast    = _sma(closes, MA_FAST)
-        ma_slow    = _sma(closes, MA_SLOW)
         ma_fast_be = _sma(closes[:-RISING_LOOKBACK], MA_FAST)  # fast MA N days ago
-        if not (ma_fast and ma_slow and ma_fast_be):
+        if not (ma_fast and ma_fast_be):
+            continue
+        pct_above = (price - ma_fast) / ma_fast * 100.0
+        rsi       = _rsi(closes)
+
+        if meanrev:
+            ma_long = _sma(closes, MA_LONG)
+            is_setup, why = meanrev_entry_setup(price, ma_long, rsi, pct_above)
+            if is_setup:
+                # Deeper oversold = higher score (RSI depth or dip depth, whichever is larger).
+                rsi_depth = CONFIG.meanrev_rsi_entry - rsi if rsi is not None else 0.0
+                dip_depth = CONFIG.meanrev_dip_entry_pct - pct_above
+                macd_v, _macd_sig, macd_bull = _macd(closes)
+                candidates.append({
+                    "symbol":         sym,
+                    "price":          round(price, 2),
+                    "ma20":           round(ma_fast, 2),
+                    "ma200":          round(ma_long, 2),
+                    "pct_above_ma20": round(pct_above, 2),
+                    "rsi":            rsi,
+                    "macd":           macd_v,
+                    "macd_bullish":   macd_bull,
+                    "sector":         CONFIG.sector_map.get(sym, "unknown"),
+                    "setup":          f"oversold in long-term uptrend ({why})",
+                    "score":          round(max(rsi_depth, dip_depth), 2),
+                })
             continue
 
+        # ── original pullback mode ──
+        ma_slow = _sma(closes, MA_SLOW)
+        if not ma_slow:
+            continue
         uptrend   = price > ma_slow
         ma_rising = ma_fast > ma_fast_be
-        pct_above = (price - ma_fast) / ma_fast * 100.0
         in_band   = PULLBACK_LOW <= pct_above <= PULLBACK_HIGH
 
         if uptrend and ma_rising and in_band:
@@ -119,7 +173,7 @@ def scan_market(broker=None, top_n=5):
                 "ma20":           round(ma_fast, 2),
                 "ma50":           round(ma_slow, 2),
                 "pct_above_ma20": round(pct_above, 2),
-                "rsi":            _rsi(closes),
+                "rsi":            rsi,
                 "macd":           macd_v,
                 "macd_bullish":   macd_bull,
                 "sector":         CONFIG.sector_map.get(sym, "unknown"),
