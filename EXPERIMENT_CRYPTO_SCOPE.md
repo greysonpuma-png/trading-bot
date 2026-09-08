@@ -130,6 +130,65 @@ to holdout only if it beats equal-weight buy-and-hold on train **risk-adjusted**
 (Sharpe) in at least 2 of 3 windows. Holdout is evaluated once. If holdout fails,
 the framework is refuted and the result is recorded — same as the previous three.
 
+---
+
+## RESULT — baseline (2026-09-08)
+
+Params: lookback 90d, top 3, weekly rebalance, BTC>100d MA regime gate.
+
+| Window | Return | Benchmark | Alpha | Sharpe | Bench Sharpe | ΔSharpe |
+|---|---|---|---|---|---|---|
+| 2021-04 → 2022-04 | +538.11% | +39.99% | +498.12% | +2.89 | +0.85 | **+2.04** |
+| 2022-04 → 2023-04 | −43.59% | −56.15% | +12.56% | −1.17 | −0.54 | −0.62 |
+| 2023-04 → 2024-04 | +108.06% | +171.75% | −63.68% | +1.52 | +2.10 | −0.59 |
+
+**Sharpe: 1/3 windows. Rule required 2/3. FAILS — does not advance to holdout.**
+
+Average raw alpha was **+149%** and 2/3 windows were positive on return. On a
+raw-return lens this passes comfortably and advances. On the pre-registered
+risk-adjusted lens it fails. Same data, opposite verdict — decided entirely by a
+choice made before any number existed. Nearly all of the raw alpha comes from a
+single window (2021 alt season, +498%); the other two windows have worse
+risk-adjusted returns than simply holding the ten assets.
+
+One genuine positive: drawdowns were materially better in 2 of 3 windows
+(28.2% vs 62.2%, 47.1% vs 70.9%). The BTC regime gate is doing real work.
+
+---
+
+## PRE-REGISTRATION — Hypothesis 1 (written 2026-09-08, BEFORE running)
+
+**The diagnostic.** Window 3 is the informative failure: the strategy returned
++108% against a +172% benchmark. If the momentum signal had any predictive
+value, holding the strongest 3 should beat the average of all 10. It did not —
+**the ranking performed worse than random.** That is the signature of reversal,
+not continuation: assets with the strongest trailing 90-day returns
+subsequently underperformed their peers.
+
+**Hypothesis.** The 90-day lookback is too slow for crypto's cycle. It ranks on
+moves that have already largely played out, so the strategy systematically buys
+exhausted trends near their turning point. If momentum operates at a faster
+horizon in this asset class, a **30-day lookback** should rank better and improve
+risk-adjusted returns, with the largest improvement in window 3 where the slow
+signal was most clearly anti-predictive.
+
+**Single variable changed:** `--lookback 30`. Top-K, rebalance period, regime
+gate, universe, and windows all unchanged.
+
+**Refutation condition, fixed in advance:** the same bar as the baseline —
+beat the equal-weight benchmark on Sharpe in **at least 2 of 3 train windows**.
+Anything less refutes the hypothesis and the crypto framework is closed. A
+result that improves raw alpha but not Sharpe does **not** count as support;
+that is the exact confusion this benchmark was chosen to prevent.
+
+**Budget:** this is comparison #2 on the train set. Regardless of outcome,
+no further parameter search will be run on these windows — the
+multiple-comparisons ratchet is what turned Donchian's train −0.61% into a
+holdout −16.88%, and three or four more comparisons would put this framework in
+the same position.
+
+---
+
 ## Honest prior
 
 Three frameworks and one live forward test have failed. Crypto momentum is among
