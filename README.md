@@ -5,10 +5,17 @@ risk layer, walk-forward backtesting framework, and honest negative results.
 
 **→ Full project documentation: [trading_agent_swing/README.md](trading_agent_swing/README.md)**
 
-**Status (July 2026):** a pre-registered forward test of trailing-stop exits
-is running live on the paper account — first read ~Sept 3, 2026, scored as
-alpha vs SPY (`python forward_test.py`). Operating rules in
-[HANDOFF.md](HANDOFF.md).
+**Status (September 2026):** the pre-registered forward test of trailing-stop
+exits **closed on 2026-09-01 and was refuted** — alpha of **+0.01% vs SPY** over
+57 trading days, honoring the decision rule written before the test began. That
+makes four experiments (three backtested frameworks plus one live forward test),
+none of which found edge over buy-and-hold.
+
+The bot now runs a different experiment: [Exp5](EXPERIMENT_MEANREV.md) grades
+whether the LLM pipeline faithfully executes a written mandate, scored on
+fidelity rather than P&L. Also here: an [evaluation of Robinhood's agentic
+trading platform](ROBINHOOD_EVALUATION.md) and a
+[scope for a crypto framework](EXPERIMENT_CRYPTO_SCOPE.md).
 
 ## Layout
 

@@ -16,14 +16,24 @@ and what the data actually said.
 This is — explicitly — a learning project. The value is in the methodology
 and infrastructure, not in the simulated P&L.
 
-**Current status (July 2026):** a fourth, pre-registered experiment —
-trailing-stop exits — is running live on the paper account as a true
-out-of-sample forward test (baseline 2026-06-11; first meaningful read
-~Sept 3, 2026; full verdict ~Dec 2026). The scoreboard is one command
-(`python forward_test.py`) and one number (alpha vs SPY), with the
-decision rule written down in advance so the result can't be
-rationalized after the fact. See `HANDOFF.md` at the repo root for the
-operating rules while the test runs.
+**Current status (September 2026): the forward test is complete, and it
+failed.** The fourth experiment — trailing-stop exits, run live on the paper
+account as a genuine out-of-sample test from 2026-06-11 — was read on its
+pre-registered date and returned **alpha of +0.01% vs SPY over 57 trading
+days**. The account and the benchmark finished within a hundredth of a percent
+of each other.
+
+The decision rule, written in June before any of the data existed, said:
+*"alpha negative or ~zero → the change is refuted, exactly as the backtests
+predicted. Stop here."* It was refuted, and it stopped there. The trajectory is
+worth recording — +1.32% at 13 days, +0.69% at 52, +0.01% at 57 — because that
+convergence toward zero as the sample grows is what noise leaving a system looks
+like, and it is exactly why 13 days of data could not have answered this.
+
+That closes the profitability question for this strategy. The bot now runs
+[Exp5](../EXPERIMENT_MEANREV.md), which asks something different and still
+open: does an LLM pipeline faithfully execute a written mandate? It is scored on
+fidelity, not returns.
 
 Two mid-test operational notes, recorded for honesty: on 2026-07-08,
 position sizing was raised (~20% → ~60% target deployment) and a
@@ -383,7 +393,14 @@ where 9+ sectors are up, and got the rotation wrong in 2021 (lost outright
 in a +14.8% SPY year). Skipped holdout validation — train alone was
 sufficient to inform the verdict.
 
-**4. Trailing-stop exits — forward test in progress** (`--exit trailing`)
+**4. Trailing-stop exits — forward test COMPLETE, refuted** (`--exit trailing`)
+
+_Result (2026-09-01): **+0.01% alpha vs SPY over 57 trading days.** Account
++3.26%, SPY +3.26%. Refuted under the pre-registered rule._ The detail below
+describes the experiment as designed; the outcome is that the train-set
+improvement did not survive contact with out-of-sample data — the same pattern
+as the three backtested frameworks, this time measured live.
+
 
 A fourth, pre-registered experiment (June 2026): replace bracket exits with a
 −7% hard stop + 10% trailing stop and **no profit target** — cut losers, let
@@ -399,12 +416,17 @@ to be at least partly curve-fit.
 
 ### What the results add up to
 
-Three structurally different frameworks. Disciplined train/holdout
-methodology. Consistent finding: **no demonstrable out-of-sample edge over
-SPY buy-and-hold.** This is the expected result from rigorous quant
-research — most strategy ideas don't work, and proper validation reveals
-which apparent edges are real vs noise. Professional quant teams find
-exactly this on most ideas.
+Three structurally different frameworks, plus a live forward test of the best
+surviving idea. Disciplined train/holdout methodology throughout. Consistent
+finding: **no demonstrable out-of-sample edge over SPY buy-and-hold.** This is
+the expected result from rigorous quant research — most strategy ideas don't
+work, and proper validation reveals which apparent edges are real vs noise.
+Professional quant teams find exactly this on most ideas.
+
+The forward test is the part worth dwelling on. Every backtest can be argued
+with; a pre-registered live test on data that did not exist when the rule was
+written cannot. It returned +0.01%. The value of writing the decision rule
+in advance is that there was nothing left to negotiate when the number arrived.
 
 The infrastructure works. The methodology is sound. The strategies tested
 just don't have edge in this market regime, on this data, with what a

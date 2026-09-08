@@ -84,6 +84,39 @@ def test_no_exit_with_missing_rsi_and_loss():
     assert not sig
 
 
+# ── exit-rule attribution (feeds exit_analysis.py) ───────────────────────────
+
+def test_classify_gain_only():
+    from tools import classify_exit_rule
+    assert classify_exit_rule(rsi=50.0, gain_pct=CONFIG.meanrev_gain_exit_pct) == "gain"
+
+
+def test_classify_rsi_only():
+    from tools import classify_exit_rule
+    assert classify_exit_rule(rsi=CONFIG.meanrev_rsi_exit, gain_pct=0.0) == "rsi"
+
+
+def test_classify_both():
+    from tools import classify_exit_rule
+    assert classify_exit_rule(rsi=CONFIG.meanrev_rsi_exit,
+                              gain_pct=CONFIG.meanrev_gain_exit_pct) == "both"
+
+
+def test_classify_none_when_no_signal():
+    from tools import classify_exit_rule
+    assert classify_exit_rule(rsi=50.0, gain_pct=1.0) is None
+
+
+def test_classification_agrees_with_the_mandate():
+    """Attribution must never disagree with the rule that actually governs
+    trading — a classified exit implies a signal, and vice versa."""
+    from tools import classify_exit_rule, reversion_exit_signal
+    for rsi in (None, 20.0, 59.9, 60.0, 80.0):
+        for gain in (None, -5.0, 5.9, 6.0, 20.0):
+            signal, _ = reversion_exit_signal(rsi, gain)
+            assert signal == (classify_exit_rule(rsi, gain) is not None), (rsi, gain)
+
+
 # ── cadence cap (risk layer) ─────────────────────────────────────────────────
 
 def test_cadence_blocks_second_buy_of_day(tmp_path, meanrev_mode):

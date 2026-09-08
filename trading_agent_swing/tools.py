@@ -216,6 +216,25 @@ def reversion_exit_signal(rsi, gain_pct):
     return False, "still low: reversion target not reached"
 
 
+def classify_exit_rule(rsi, gain_pct):
+    """Which arm of the exit rule fired: 'rsi', 'gain', 'both', or None.
+
+    Recorded per exit so `exit_analysis.py` can answer the question a fixed
+    profit target always raises: did selling at +N% leave money on the table,
+    and did the statistical signal (RSI) time exits better than the accounting
+    rule (gain target)? Kept separate from reversion_exit_signal() so the
+    mandate's behaviour is unchanged by the measurement."""
+    by_rsi = rsi is not None and rsi >= CONFIG.meanrev_rsi_exit
+    by_gain = gain_pct is not None and gain_pct >= CONFIG.meanrev_gain_exit_pct
+    if by_rsi and by_gain:
+        return "both"
+    if by_rsi:
+        return "rsi"
+    if by_gain:
+        return "gain"
+    return None
+
+
 def get_reversion_status(symbol: str) -> dict:
     """MEAN-REVERSION mandate: objective exit check for one held position.
     Computes RSI(14) and unrealized gain in Python and applies the written
@@ -232,6 +251,17 @@ def get_reversion_status(symbol: str) -> dict:
     rsi = _rsi(closes) if len(closes) >= 15 else None
     gain_pct = round(float(pos["unrealized_plpc"]) * 100.0, 2)
     signal, why = reversion_exit_signal(rsi, gain_pct)
+
+    # Stash the reading so propose_trade can attribute the exit without
+    # recomputing it (and without the LLM being able to misreport it).
+    _cycle_cache[f"_revstatus_{symbol}"] = {
+        "rsi_14d": rsi,
+        "unrealized_gain_pct": gain_pct,
+        "exit_rule": classify_exit_rule(rsi, gain_pct),
+        "price_at_signal": round(float(pos.get("current_price", 0.0)), 4),
+        "avg_entry_price": round(float(pos.get("avg_entry_price", 0.0)), 4),
+    }
+
     return {
         "symbol": symbol,
         "held": True,
@@ -307,6 +337,8 @@ def propose_trade(symbol: str, side: str, qty: int, reason: str,
             update = {**proposal, "status": "executed", "executed": True, "order": order}
             with open(_proposals_file, "a") as f:
                 f.write(json.dumps({"update": update}) + "\n")
+            if side == "sell":
+                _record_exit(symbol, qty)
             return {"accepted": True, "executed": True, "order": order}
         except Exception as e:
             return {"accepted": True, "executed": False, "error": str(e)}
@@ -316,6 +348,31 @@ def propose_trade(symbol: str, side: str, qty: int, reason: str,
         "executed": False,
         "message": "queued for human review. run `python review.py` to approve.",
     }
+
+
+def _record_exit(symbol: str, qty) -> None:
+    """Append an exit record for later forward-return analysis.
+
+    Deliberately records only what is knowable AT the exit — the rule that
+    fired and the price at that moment. What happened afterwards is computed
+    at report time by exit_analysis.py, so nothing here can peek at the future.
+    Best-effort: a logging failure must never break a trade."""
+    try:
+        st = _cycle_cache.get(f"_revstatus_{symbol}") or {}
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "symbol": symbol,
+            "qty": qty,
+            "exit_rule": st.get("exit_rule"),          # 'rsi' | 'gain' | 'both' | None
+            "rsi_at_exit": st.get("rsi_14d"),
+            "gain_pct_at_exit": st.get("unrealized_gain_pct"),
+            "exit_price": st.get("price_at_signal"),
+            "avg_entry_price": st.get("avg_entry_price"),
+        }
+        with open(os.path.join(CONFIG.log_dir, "exits.jsonl"), "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
 
 
 # ===== pipeline handoff tools =====
