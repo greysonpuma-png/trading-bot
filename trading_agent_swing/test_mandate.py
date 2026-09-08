@@ -113,6 +113,72 @@ def test_cadence_never_blocks_sells(tmp_path, meanrev_mode):
     assert res.approved, res.reason
 
 
+# ── sells must reclaim shares locked by protective stops ─────────────────────
+
+class _FakeOrder:
+    def __init__(self, symbol, side, oid, status="OrderStatus.NEW"):
+        self.symbol, self.side, self.id, self.status = symbol, side, oid, status
+
+
+class _FakeTrading:
+    """Minimal stand-in for alpaca-py's TradingClient covering the sell path."""
+    def __init__(self, orders):
+        self.orders = list(orders)
+        self.cancelled = []
+        self.submitted = []
+
+    def get_orders(self):
+        return list(self.orders)
+
+    def cancel_order_by_id(self, oid):
+        self.cancelled.append(oid)
+        self.orders = [o for o in self.orders if o.id != oid]
+
+    def get_all_positions(self):
+        return []          # position gone -> release loop exits immediately
+
+    def submit_order(self, req):
+        self.submitted.append(req)
+        from types import SimpleNamespace
+        return SimpleNamespace(id="new-order", symbol=req.symbol, qty=req.qty,
+                               side=req.side, status=type("S", (), {"value": "accepted"})(),
+                               submitted_at=None)
+
+
+def _broker_with(trading):
+    from broker import Broker
+    b = Broker.__new__(Broker)      # skip __init__ (no network/credentials)
+    b.trading = trading
+    return b
+
+
+def test_sell_cancels_protective_stop_first():
+    """The 2026-09-08 bug: shares held by a trailing stop made every sell fail
+    with 'insufficient qty available'. A sell must cancel that stop first."""
+    from alpaca.trading.enums import OrderSide
+    trading = _FakeTrading([_FakeOrder("JNJ", OrderSide.SELL, "stop-1"),
+                            _FakeOrder("XLV", OrderSide.SELL, "stop-2")])
+    b = _broker_with(trading)
+    b.submit_order("JNJ", 50, "sell")
+    assert trading.cancelled == ["stop-1"], "must cancel JNJ's stop, and only JNJ's"
+    assert len(trading.submitted) == 1, "the market sell must still be submitted"
+
+
+def test_buy_does_not_cancel_anything():
+    from alpaca.trading.enums import OrderSide
+    trading = _FakeTrading([_FakeOrder("JNJ", OrderSide.SELL, "stop-1")])
+    b = _broker_with(trading)
+    b.submit_order("JNJ", 5, "buy")
+    assert trading.cancelled == [], "a buy must never cancel protective orders"
+
+
+def test_sell_with_no_open_orders_still_submits():
+    trading = _FakeTrading([])
+    b = _broker_with(trading)
+    b.submit_order("JNJ", 50, "sell")
+    assert trading.cancelled == [] and len(trading.submitted) == 1
+
+
 def test_cadence_ignored_in_pullback_mode(tmp_path):
     """In pullback mode the daily-entry cap must not apply — regardless of what
     STRATEGY_MODE the ambient .env sets, so force it for this test."""

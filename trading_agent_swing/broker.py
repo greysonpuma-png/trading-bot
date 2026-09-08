@@ -4,6 +4,7 @@ Thin wrapper around the Alpaca Trading + Data APIs.
 The same code works for paper and live — only the API keys and `paper=` flag change.
 """
 import socket
+import time
 # A process-global socket default as a weak backstop. NOTE: requests/urllib3
 # (which alpaca-py uses) does NOT reliably honor this, so it is NOT sufficient
 # on its own — see _force_session_timeout below for the real per-request fix,
@@ -144,7 +145,50 @@ class Broker:
             for b in bars[symbol]
         ][-limit:]
 
+    def release_shares_for_sell(self, symbol: str) -> int:
+        """Cancel any open SELL orders on `symbol` so its shares can be sold.
+
+        Why this exists: a protected position's shares are 100% "held_for_orders"
+        by its broker-side trailing stop (or bracket stop/target legs). Alpaca
+        then rejects any further sell with 40310000 "insufficient qty available
+        (available: 0)". Discovered 2026-09-08: every intentional close the
+        Position Manager proposed had been silently failing this way — the LLM
+        proposed correctly, the plumbing dropped it.
+
+        Cancels only sells on this symbol, then waits briefly for the release.
+        Returns how many orders were cancelled. Safe if there are none.
+        """
+        cancelled = 0
+        try:
+            for o in self.trading.get_orders():
+                if (o.symbol == symbol.upper()
+                        and o.side == OrderSide.SELL
+                        and str(o.status).upper().split(".")[-1] in
+                        ("NEW", "ACCEPTED", "HELD", "PENDING_NEW", "PARTIALLY_FILLED")):
+                    self.trading.cancel_order_by_id(o.id)
+                    cancelled += 1
+        except Exception:
+            return cancelled  # best effort: let the sell attempt surface any real error
+        if cancelled:
+            # Cancellation is async; give Alpaca a moment to free the shares.
+            for _ in range(10):
+                time.sleep(0.5)
+                try:
+                    held = next((p for p in self.trading.get_all_positions()
+                                 if p.symbol == symbol.upper()), None)
+                    if held is None or float(getattr(held, "qty_available", 0) or 0) > 0:
+                        break
+                except Exception:
+                    break
+        return cancelled
+
     def submit_order(self, symbol: str, qty: int, side: str) -> dict:
+        # A sell must first reclaim shares locked by the position's own
+        # protective stop, or Alpaca rejects it outright (see above).
+        released = 0
+        if side.lower() == "sell":
+            released = self.release_shares_for_sell(symbol)
+
         req = MarketOrderRequest(
             symbol=symbol,
             qty=qty,
@@ -152,6 +196,8 @@ class Broker:
             time_in_force=TimeInForce.DAY,
         )
         order = self.trading.submit_order(req)
+        if released:
+            print(f"  (cancelled {released} protective order(s) on {symbol} to free shares)")
         return {
             "id": str(order.id),
             "symbol": order.symbol,

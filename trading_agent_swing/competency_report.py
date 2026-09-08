@@ -122,22 +122,36 @@ def main():
                 entry_bad += 1
                 offenders.append((c["t"][:16], sym))
 
-    # ── exit fidelity: exit_signal=true acted on; no improvised sells ──
-    signals_true = acted = 0
-    missed, improvised = [], []
+    # ── exit fidelity ──
+    # Two DISTINCT things, deliberately scored separately (learned 2026-09-08,
+    # when broker-side stops silently blocked every sell): the LLM's decision to
+    # propose the exit, and whether that exit actually reached the market. Scoring
+    # only proposals made a completely broken exit path look like 100% fidelity.
+    signals_true = proposed = executed = 0
+    missed, improvised, failed = [], [], []
     for c in cycles:
         status = {}
         for a, res in _tool_results(c, "get_reversion_status"):
             if res.get("held"):
                 status[res.get("symbol")] = bool(res.get("exit_signal"))
-        sells = {a.get("symbol", "").upper()
-                 for a, _res in _tool_results(c, "propose_trade")
-                 if a.get("side") == "sell"}
+        sells, sells_ok = set(), set()
+        for a, res in _tool_results(c, "propose_trade"):
+            if a.get("side") != "sell":
+                continue
+            sym = a.get("symbol", "").upper()
+            sells.add(sym)
+            if isinstance(res, dict) and res.get("executed"):
+                sells_ok.add(sym)
+            else:
+                failed.append((c["t"][:16], sym,
+                               str((res or {}).get("error", "not executed"))[:80]))
         for sym, sig in status.items():
             if sig:
                 signals_true += 1
                 if sym in sells:
-                    acted += 1
+                    proposed += 1
+                    if sym in sells_ok:
+                        executed += 1
                 else:
                     missed.append((c["t"][:16], sym))
         for sym in sells:
@@ -175,10 +189,18 @@ def main():
         print(f"      OFF-MANDATE: {sym} at {t}")
     print()
     print("  EXIT FIDELITY (sell exactly when exit_signal says so)")
-    pct = (100.0 * acted / signals_true) if signals_true else 100.0
-    print(f"    exit signals acted on same cycle: {acted}/{signals_true}  ({pct:.0f}%)")
+    pct_p = (100.0 * proposed / signals_true) if signals_true else 100.0
+    pct_x = (100.0 * executed / signals_true) if signals_true else 100.0
+    print(f"    LLM decision  — signals proposed same cycle: {proposed}/{signals_true}  ({pct_p:.0f}%)")
+    print(f"    EXECUTION     — signals actually filled:     {executed}/{signals_true}  ({pct_x:.0f}%)")
     for t, sym in missed:
-        print(f"      MISSED EXIT: {sym} at {t}")
+        print(f"      MISSED EXIT (LLM never proposed): {sym} at {t}")
+    if failed:
+        print(f"    sells proposed but NOT executed: {len(failed)} (infrastructure, not LLM)")
+        for t, sym, err in failed[:5]:
+            print(f"      FAILED: {sym} at {t} — {err}")
+        if len(failed) > 5:
+            print(f"      ... and {len(failed) - 5} more")
     print(f"    improvised sells (no signal): {len(improvised)}")
     for t, sym in improvised:
         print(f"      IMPROVISED: {sym} at {t}")
