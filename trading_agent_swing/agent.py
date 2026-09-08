@@ -194,6 +194,11 @@ class TradingAgent:
             from gemini_client import GeminiClient
             self.client = GeminiClient(api_key=CONFIG.gemini_api_key)
             self.model = CONFIG.gemini_model
+        elif CONFIG.model_provider == "deepseek":
+            from deepseek_client import DeepSeekClient
+            self.client = DeepSeekClient(api_key=CONFIG.deepseek_api_key,
+                                         base_url=CONFIG.deepseek_base_url)
+            self.model = CONFIG.deepseek_model
         else:
             self.client = Client(host=CONFIG.ollama_host)
             self.model = CONFIG.model_name

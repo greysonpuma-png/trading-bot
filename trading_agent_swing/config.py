@@ -23,10 +23,14 @@ class Config:
     ollama_host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     model_name: str = os.getenv("MODEL_NAME", "qwen3:4b")
 
-    # === Model provider: "ollama" (local, free) or "gemini" (cloud, fast) ===
+    # === Model provider: "ollama" (local, free), "gemini" (cloud), or
+    #     "deepseek" (cloud, OpenAI-compatible — Exp5 Arm B) ===
     model_provider: str = os.getenv("MODEL_PROVIDER", "ollama").strip().lower()
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
+    deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
     # === HARD RISK LIMITS — tuned for SWING trading ===
     # Resized 2026-07-08: target ~60% of the $100k paper account deployed
