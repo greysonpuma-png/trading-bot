@@ -187,6 +187,43 @@ multiple-comparisons ratchet is what turned Donchian's train −0.61% into a
 holdout −16.88%, and three or four more comparisons would put this framework in
 the same position.
 
+## RESULT — Hypothesis 1: REFUTED (2026-09-08)
+
+Params: lookback **30d** (single variable changed), top 3, weekly, regime gate on.
+
+| Window | Return | Benchmark | Alpha | Sharpe | Bench Sharpe | ΔSharpe |
+|---|---|---|---|---|---|---|
+| 2021-04 → 2022-04 | +266.76% | +39.99% | +226.76% | +1.99 | +0.85 | +1.14 |
+| 2022-04 → 2023-04 | −42.28% | −56.15% | +13.86% | −0.86 | −0.54 | −0.31 |
+| 2023-04 → 2024-04 | +88.54% | +171.75% | −83.20% | +1.35 | +2.10 | **−0.76** |
+
+**Sharpe: 1/3 windows. Rule required 2/3. REFUTED.**
+
+| | baseline (90d) | H1 (30d) |
+|---|---|---|
+| Sharpe wins | 1/3 | 1/3 |
+| Avg ΔSharpe | +0.28 | **+0.02** |
+| Window 3 ΔSharpe | −0.59 | **−0.76** |
+| Avg raw alpha | +149% | +52% |
+
+The refutation is unusually clean because the hypothesis was *directional*: it
+predicted the largest improvement in window 3, where the slow signal appeared
+anti-predictive. Window 3 got **worse**. Every headline metric moved the wrong
+way. There is no reading of this that supports the claim.
+
+**What it rules out.** Shortening the ranking horizon does not recover the
+signal. If anything the comparison hints the opposite — the 90-day baseline had
+the better average ΔSharpe — but chasing that would be comparison #3, which the
+pre-registration explicitly ruled out. **Budget honored: no further parameter
+search on these windows.** Holdout (2024-04→2026-04) remains untouched and can
+still validate some future, genuinely different framework.
+
+## STATUS: Exp6 CLOSED — crypto cross-sectional momentum refuted
+
+Fourth backtested framework to fail out-of-sample discipline, and the fifth
+negative result overall counting the live forward test. The equity data was
+spent; the crypto data was fresh, and the answer came back the same.
+
 ---
 
 ## Honest prior
