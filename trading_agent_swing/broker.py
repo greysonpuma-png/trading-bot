@@ -145,6 +145,36 @@ class Broker:
             for b in bars[symbol]
         ][-limit:]
 
+    def get_closed_sell_fills(self, limit: int = 50) -> list:
+        """Recently FILLED sell orders, including broker-side stop exits.
+
+        Stop fills never pass through propose_trade — they execute at Alpaca on
+        their own — so without polling for them the trade record silently omits
+        every position that exited by stop rather than by the mandate's rule.
+        """
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+        out = []
+        try:
+            orders = self.trading.get_orders(
+                GetOrdersRequest(status=QueryOrderStatus.CLOSED, limit=limit))
+        except Exception:
+            return out
+        for o in orders:
+            if not str(o.side).upper().endswith("SELL"):
+                continue
+            if not str(o.status).upper().endswith("FILLED"):
+                continue
+            out.append({
+                "id": str(o.id),
+                "symbol": o.symbol,
+                "qty": float(o.filled_qty or 0),
+                "price": float(o.filled_avg_price) if o.filled_avg_price else None,
+                "order_type": str(o.order_type).split(".")[-1].lower(),
+                "filled_at": o.filled_at.isoformat() if o.filled_at else None,
+            })
+        return out
+
     def release_shares_for_sell(self, symbol: str) -> int:
         """Cancel any open SELL orders on `symbol` so its shares can be sold.
 

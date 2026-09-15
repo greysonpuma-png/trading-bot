@@ -117,6 +117,57 @@ def test_classification_agrees_with_the_mandate():
             assert signal == (classify_exit_rule(rsi, gain) is not None), (rsi, gain)
 
 
+# ── stop-exit reconciliation ─────────────────────────────────────────────────
+
+def test_reconcile_records_only_stop_fills(tmp_path, monkeypatch):
+    """Market sells already go through _record_exit; reconciliation must catch
+    ONLY the broker-side stop fills, or every mandate exit gets double-counted."""
+    import tools
+    fills = [
+        {"id": "o1", "symbol": "XLI", "qty": 13, "price": 174.0,
+         "order_type": "trailing_stop", "filled_at": "2026-09-14T13:34:00"},
+        {"id": "o2", "symbol": "JNJ", "qty": 50, "price": 241.0,
+         "order_type": "market", "filled_at": "2026-09-08T17:06:00"},
+    ]
+    monkeypatch.setattr(tools._broker, "get_closed_sell_fills", lambda limit=50: fills)
+    monkeypatch.setattr(tools, "_exits_file", str(tmp_path / "exits.jsonl"))
+    monkeypatch.setattr(tools, "_snapshot_file", str(tmp_path / "snap.json"))
+    (tmp_path / "snap.json").write_text(json.dumps(
+        {"XLI": {"avg_entry_price": 186.0, "qty": 41}}))
+
+    assert tools.reconcile_stop_exits() == 1
+    rows = [json.loads(l) for l in open(tmp_path / "exits.jsonl")]
+    assert len(rows) == 1
+    assert rows[0]["symbol"] == "XLI" and rows[0]["exit_rule"] == "stop"
+    assert rows[0]["gain_pct_at_exit"] == round((174.0 / 186.0 - 1) * 100, 2)
+
+
+def test_reconcile_is_idempotent(tmp_path, monkeypatch):
+    """Runs every cycle — a fill must never be recorded twice."""
+    import tools
+    fills = [{"id": "o1", "symbol": "XLI", "qty": 13, "price": 174.0,
+              "order_type": "trailing_stop", "filled_at": "2026-09-14T13:34:00"}]
+    monkeypatch.setattr(tools._broker, "get_closed_sell_fills", lambda limit=50: fills)
+    monkeypatch.setattr(tools, "_exits_file", str(tmp_path / "exits.jsonl"))
+    monkeypatch.setattr(tools, "_snapshot_file", str(tmp_path / "snap.json"))
+    assert tools.reconcile_stop_exits() == 1
+    assert tools.reconcile_stop_exits() == 0
+    assert len(open(tmp_path / "exits.jsonl").readlines()) == 1
+
+
+def test_reconcile_survives_missing_snapshot(tmp_path, monkeypatch):
+    """No snapshot means no entry price — record the exit anyway, gain unknown."""
+    import tools
+    fills = [{"id": "o9", "symbol": "HD", "qty": 7, "price": 330.0,
+              "order_type": "trailing_stop", "filled_at": "2026-09-01T13:44:00"}]
+    monkeypatch.setattr(tools._broker, "get_closed_sell_fills", lambda limit=50: fills)
+    monkeypatch.setattr(tools, "_exits_file", str(tmp_path / "exits.jsonl"))
+    monkeypatch.setattr(tools, "_snapshot_file", str(tmp_path / "nope.json"))
+    assert tools.reconcile_stop_exits() == 1
+    row = json.loads(open(tmp_path / "exits.jsonl").readline())
+    assert row["gain_pct_at_exit"] is None and row["exit_rule"] == "stop"
+
+
 # ── cadence cap (risk layer) ─────────────────────────────────────────────────
 
 def test_cadence_blocks_second_buy_of_day(tmp_path, meanrev_mode):

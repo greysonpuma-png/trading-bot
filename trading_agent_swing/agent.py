@@ -253,6 +253,18 @@ class TradingAgent:
         clear_cycle_cache()   # fresh market data each cycle; dedup re-fetches within it
         parts = []
 
+        # Catch any position the broker's own stop closed since the last cycle,
+        # then snapshot what's held so a future stop fill can be priced against
+        # its entry. Order matters: reconcile against the OLD snapshot first.
+        from tools import reconcile_stop_exits, snapshot_positions
+        try:
+            n_stopped = reconcile_stop_exits()
+            if n_stopped:
+                self._log({"event": "stop_exits_recorded", "n": n_stopped})
+            snapshot_positions()
+        except Exception as e:
+            self._log({"event": "reconcile_error", "error": str(e)})
+
         # Stage 0 — Python screener (no LLM): reliably scans every symbol.
         try:
             candidates = scan_market(top_n=5)

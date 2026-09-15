@@ -60,9 +60,17 @@ class FakeBroker:
 
 
 def make_risk(tmp_path, broker):
-    """RiskLayer pointed at a temp daily-pnl file so tests never touch ./logs/."""
+    """RiskLayer pointed at temp state files so tests never touch ./logs/.
+
+    BOTH files must be redirected. proposals_file was added when the
+    mean-reversion cadence check began counting the day's executed buys — left
+    pointing at the real log, these tests read production trade history and
+    fail on any day the live bot happened to buy something. A test whose result
+    depends on what the bot did this morning is not a test.
+    """
     risk = RiskLayer(broker)
     risk.daily_pnl_file = str(tmp_path / "daily_pnl.json")
+    risk.proposals_file = str(tmp_path / "proposals.jsonl")
     return risk
 
 

@@ -87,6 +87,31 @@ def main():
     from broker import Broker
     broker = Broker()
 
+    # ── how positions actually ended ────────────────────────────────────────
+    # The headline number. The mandate's profit rule and the broker's trailing
+    # stop are in competition for every position, and if the stop wins most of
+    # the time then the profit target is largely theoretical — it is rarely
+    # reached. That ratio says more than any forward-return average.
+    mandate = [e for e in exits if e.get("exit_rule") in ("rsi", "gain", "both")]
+    stopped = [e for e in exits if e.get("exit_rule") == "stop"]
+    n_end = len(mandate) + len(stopped)
+    if n_end:
+        print("  HOW POSITIONS ENDED")
+        print(f"    sold at the mandate's target : {len(mandate):>3}  "
+              f"({100.0 * len(mandate) / n_end:.0f}%)")
+        print(f"    stopped out by trailing stop : {len(stopped):>3}  "
+              f"({100.0 * len(stopped) / n_end:.0f}%)")
+        realized = [e["gain_pct_at_exit"] for e in mandate + stopped
+                    if e.get("gain_pct_at_exit") is not None]
+        if realized:
+            m = [e["gain_pct_at_exit"] for e in mandate if e.get("gain_pct_at_exit") is not None]
+            s = [e["gain_pct_at_exit"] for e in stopped if e.get("gain_pct_at_exit") is not None]
+            if m:
+                print(f"    avg realized on target exits : {statistics.mean(m):+.2f}%")
+            if s:
+                print(f"    avg realized on stop-outs    : {statistics.mean(s):+.2f}%")
+        print()
+
     by_rule = {}
     matured = 0
     print(f"  {len(exits)} exit(s) recorded\n")

@@ -350,6 +350,86 @@ def propose_trade(symbol: str, side: str, qty: int, reason: str,
     }
 
 
+_exits_file = os.path.join(CONFIG.log_dir, "exits.jsonl")
+_snapshot_file = os.path.join(CONFIG.log_dir, "position_snapshot.json")
+
+
+def snapshot_positions() -> None:
+    """Record each held position's entry price once per cycle.
+
+    A stop fill is discovered only AFTER the position is gone, so its entry
+    price is no longer retrievable from the broker. This snapshot is what makes
+    a stopped-out position's realized P&L knowable. Best-effort."""
+    try:
+        snap = {p["symbol"]: {"avg_entry_price": float(p["avg_entry_price"]),
+                              "qty": float(p["qty"])}
+                for p in _broker.get_positions()}
+        with open(_snapshot_file, "w") as f:
+            json.dump(snap, f)
+    except Exception:
+        pass
+
+
+def _recorded_exit_ids() -> set:
+    """Order ids already written to exits.jsonl, so reconciliation is idempotent."""
+    ids = set()
+    if not os.path.exists(_exits_file):
+        return ids
+    try:
+        with open(_exits_file) as f:
+            for line in f:
+                try:
+                    oid = json.loads(line).get("order_id")
+                except json.JSONDecodeError:
+                    continue
+                if oid:
+                    ids.add(oid)
+    except Exception:
+        pass
+    return ids
+
+
+def reconcile_stop_exits() -> int:
+    """Log broker-side stop exits the bot never proposed.
+
+    Without this the exit record is systematically biased: it captures only the
+    positions that reached the mandate's profit rule, and silently drops every
+    one that fell to its stop first. That ratio — sold at target vs stopped out —
+    is the more informative number, so it cannot be the one that goes missing.
+
+    Returns how many new exits were recorded. Best-effort; never raises."""
+    n = 0
+    try:
+        seen = _recorded_exit_ids()
+        snap = {}
+        if os.path.exists(_snapshot_file):
+            with open(_snapshot_file) as f:
+                snap = json.load(f)
+
+        for fill in _broker.get_closed_sell_fills():
+            if fill["id"] in seen or "stop" not in fill["order_type"]:
+                continue
+            entry = (snap.get(fill["symbol"]) or {}).get("avg_entry_price")
+            price = fill["price"]
+            gain = round((price / entry - 1) * 100, 2) if entry and price else None
+            with open(_exits_file, "a") as f:
+                f.write(json.dumps({
+                    "timestamp": fill["filled_at"] or datetime.now().isoformat(),
+                    "symbol": fill["symbol"],
+                    "qty": fill["qty"],
+                    "exit_rule": "stop",          # vs 'rsi' / 'gain' / 'both'
+                    "rsi_at_exit": None,
+                    "gain_pct_at_exit": gain,
+                    "exit_price": price,
+                    "avg_entry_price": entry,
+                    "order_id": fill["id"],
+                }) + "\n")
+            n += 1
+    except Exception:
+        pass
+    return n
+
+
 def _record_exit(symbol: str, qty) -> None:
     """Append an exit record for later forward-return analysis.
 
@@ -369,7 +449,7 @@ def _record_exit(symbol: str, qty) -> None:
             "exit_price": st.get("price_at_signal"),
             "avg_entry_price": st.get("avg_entry_price"),
         }
-        with open(os.path.join(CONFIG.log_dir, "exits.jsonl"), "a") as f:
+        with open(_exits_file, "a") as f:
             f.write(json.dumps(entry) + "\n")
     except Exception:
         pass
