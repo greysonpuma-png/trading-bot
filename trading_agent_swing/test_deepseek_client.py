@@ -28,6 +28,58 @@ def test_rejects_placeholder_key():
         DeepSeekClient(api_key="PASTE_YOUR_KEY_HERE")
 
 
+# ── retry policy ─────────────────────────────────────────────────────────────
+
+class _FakeResponse:
+    def __init__(self, status_code, text="err"):
+        self.status_code, self.text = status_code, text
+
+    def json(self):
+        return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+    def raise_for_status(self):
+        pass
+
+
+def _client_with_responses(monkeypatch, statuses):
+    """Client whose POST returns the given statuses in order; counts calls."""
+    c = _client()
+    calls = {"n": 0}
+    seq = list(statuses)
+
+    def fake_post(url, json=None, timeout=None):
+        calls["n"] += 1
+        return _FakeResponse(seq[min(calls["n"] - 1, len(seq) - 1)])
+
+    monkeypatch.setattr(c._session, "post", fake_post)
+    monkeypatch.setattr("deepseek_client.time.sleep", lambda s: None)
+    return c, calls
+
+
+def test_unfunded_account_fails_immediately(monkeypatch):
+    """402 is permanent — retrying an unfunded account 5 times just wastes
+    75 seconds and reports a raw status code instead of the actual problem."""
+    c, calls = _client_with_responses(monkeypatch, [402])
+    with pytest.raises(RuntimeError, match="out of credit"):
+        c.chat(model="deepseek-v4-flash", messages=[{"role": "user", "content": "hi"}])
+    assert calls["n"] == 1, "must not retry a permanent failure"
+
+
+def test_bad_key_fails_immediately_with_a_usable_message(monkeypatch):
+    c, calls = _client_with_responses(monkeypatch, [401])
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+        c.chat(model="deepseek-v4-flash", messages=[{"role": "user", "content": "hi"}])
+    assert calls["n"] == 1
+
+
+def test_rate_limit_is_retried_then_succeeds(monkeypatch):
+    """429 and 5xx ARE transient — these must still retry."""
+    c, calls = _client_with_responses(monkeypatch, [429, 503, 200])
+    out = c.chat(model="deepseek-v4-flash", messages=[{"role": "user", "content": "hi"}])
+    assert out["message"]["content"] == "ok"
+    assert calls["n"] == 3
+
+
 # ── message conversion ───────────────────────────────────────────────────────
 
 def test_tool_result_gets_id_from_preceding_call():

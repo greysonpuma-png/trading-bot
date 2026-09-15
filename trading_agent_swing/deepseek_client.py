@@ -28,6 +28,14 @@ import requests
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 REQUEST_TIMEOUT = (30, 90)   # (connect, read) — read is generous: reasoning models stream slowly
 
+# Permanent failures worth naming in plain language: each one has a specific
+# fix, and a bot that hits them at 3am should say what to do about it.
+FATAL_HINTS = {
+    401: "the API key was rejected — check DEEPSEEK_API_KEY in .env",
+    402: "the DeepSeek account is out of credit — top it up at platform.deepseek.com",
+    404: "unknown model — check DEEPSEEK_MODEL in .env",
+}
+
 
 class DeepSeekClient:
     """A drop-in stand-in for ollama.Client, exposing the same .chat() method."""
@@ -67,6 +75,13 @@ class DeepSeekClient:
                     last_error = f"HTTP {r.status_code}: {r.text[:200]}"
                     time.sleep(self.RETRY_WAIT_SECONDS)
                     continue
+                # Other 4xx are permanent — no amount of retrying fixes a bad key
+                # or an unfunded account. Fail immediately with a usable message
+                # instead of burning 5 attempts and reporting a raw status code.
+                if 400 <= r.status_code < 500:
+                    raise RuntimeError(
+                        f"DeepSeek rejected the request ({r.status_code}): "
+                        + FATAL_HINTS.get(r.status_code, r.text[:200]))
                 r.raise_for_status()
                 return {"message": self._convert_response(r.json())}
             except requests.exceptions.RequestException as e:
